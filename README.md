@@ -239,6 +239,8 @@ dependencies, the local package with `[all]`, and runs as a non-root user with a
 writable Cloak cache + `MEDIA_BROWSER_PROFILES_ROOT`):
 
 ```bash
+git clone https://github.com/iamsupersocks/supersocks-media-scraper.git
+cd supersocks-media-scraper
 docker build -t supersocks-media-scraper:local .
 docker run --rm supersocks-media-scraper:local --version
 ```
@@ -264,6 +266,7 @@ docker run --rm \
   'https://x.com/example/status/1234567890123456789'
 ```
 
+The image initializes empty per-platform profile directories on first use.
 Named-volume profile persistence for Reddit / Instagram / Facebook maps to
 `MEDIA_BROWSER_PROFILES_ROOT/{reddit|instagram|facebook}` inside the container
 (`/home/scraper/media-browser-profiles/...`). Reuse the same volume across runs.

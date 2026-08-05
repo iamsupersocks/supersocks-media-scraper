@@ -46,7 +46,9 @@ RUN useradd --create-home --home-dir /home/scraper --uid 10001 --shell /usr/sbin
     && mkdir -p \
         /home/scraper/.cloakbrowser \
         /home/scraper/.cache \
-        /home/scraper/media-browser-profiles \
+        /home/scraper/media-browser-profiles/reddit \
+        /home/scraper/media-browser-profiles/instagram \
+        /home/scraper/media-browser-profiles/facebook \
     && chown -R scraper:scraper /home/scraper
 
 COPY pyproject.toml README.md LICENSE ./
