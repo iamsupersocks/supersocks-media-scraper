@@ -216,3 +216,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project-specific runtime / profile artifacts
+browser-profiles/
+media-browser-profiles/
+*.cookies
+*.cookie
+cookies/
+profiles/
+runtime/
+.runs/
+data/
+*.mp4
+*.webm
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+!tests/fixtures/**
+download-history/
+history.json

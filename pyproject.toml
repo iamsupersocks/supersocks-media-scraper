@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "supersocks-media-scraper"
+version = "0.1.0"
+description = "Private-by-default social media post scraper for X, Instagram, Facebook, and Reddit."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Supersocks" }]
+keywords = ["social", "scraper", "x", "twitter", "instagram", "facebook", "reddit", "cloakbrowser"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.optional-dependencies]
+browser = ["cloakbrowser>=0.4.8"]
+test = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "build>=1.2"]
+
+[project.scripts]
+supersocks-media-scraper = "supersocks_media_scraper.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/iamsupersocks/supersocks-media-scraper"
+Repository = "https://github.com/iamsupersocks/supersocks-media-scraper"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/README.md",
+  "/LICENSE",
+  "/pyproject.toml",
+  "/.env.example",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

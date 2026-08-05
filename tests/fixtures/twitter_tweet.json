@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "data": {
+    "full_text": "Synthetic tweet body for offline unit tests.",
+    "created_at": "2026-01-15T12:00:00Z",
+    "favorite_count": 10,
+    "reply_count": 2,
+    "retweet_count": 3,
+    "view_count": 1000,
+    "author": {
+      "name": "Example User",
+      "screen_name": "example",
+      "url": "https://x.com/example?utm=1#frag"
+    },
+    "entities": {
+      "media": [
+        {
+          "type": "photo",
+          "media_url_https": "https://pbs.twimg.com/media/EXAMPLE.jpg?name=large",
+          "ext_alt_text": "alt text"
+        }
+      ]
+    }
+  }
+}
