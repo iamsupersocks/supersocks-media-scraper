@@ -85,6 +85,57 @@ def test_parse_instagram_post_og_metrics_and_author() -> None:
     assert "Public caption text from smoke render" in result["text"]
 
 
+def test_parse_instagram_french_og_author_and_caption() -> None:
+    """Smoke shape: /username/p/ URL, French og:title, le <date> credit line."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta property="og:title" content="Instagram sur Instagram: Meet the artist" />
+      <meta property="og:description" content="268K likes, 11K comments - instagram le July 30, 2026: &quot;Meet the artist @prodlaila for our latest campaign.&quot;" />
+      <meta property="og:image" content="https://scontent.example/photo.jpg" />
+    </head>
+    <body><article class="Post">Like Share</article></body>
+    </html>
+    """
+    result = parse_cloak_html(
+        html,
+        platform="instagram",
+        source_url="https://www.instagram.com/instagram/p/DbbY9pdm6Q2/",
+    )
+    assert result["status"] == "ok"
+    assert result["author"]["handle"] == "instagram"
+    assert result["author"]["name"] == "Instagram"
+    assert result["text"].startswith("Meet the artist")
+    assert "@prodlaila" in result["text"]
+    assert "11K comments" not in result["text"]
+    assert result["metrics"]["likes"] == 268_000
+    assert result["metrics"]["comments"] == 11_000
+
+
+def test_parse_instagram_standard_p_url_no_inferable_author() -> None:
+    """Bare /p/CODE URLs must not infer author from caption @mentions."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta property="og:title" content="Post on Instagram" />
+      <meta property="og:description" content="12 likes, 3 comments - &quot;Shoutout to @prodlaila for the collab.&quot;" />
+      <meta property="og:image" content="https://scontent.example/photo.jpg" />
+    </head>
+    <body><article class="Post">Like Share</article></body>
+    </html>
+    """
+    result = parse_cloak_html(
+        html,
+        platform="instagram",
+        source_url="https://www.instagram.com/p/EXAMPLE/",
+    )
+    assert result["author"]["handle"] is None
+    assert result["author"]["name"] is None
+    assert "@prodlaila" in result["text"]
+
+
 def test_parse_facebook_post_metrics_and_comments() -> None:
     html = _load("facebook_post.html")
     result = parse_cloak_html(
@@ -250,4 +301,3 @@ def test_parse_facebook_comment_dedup_cleanup_and_max() -> None:
     assert "Verified account" not in (result["comments"][1]["text"] or "")
     assert not (result["comments"][1]["text"] or "").endswith("99")
     assert result["comments"][2]["author"] == "Extra One"
-

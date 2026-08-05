@@ -525,25 +525,55 @@ def _extract_reddit_post_fields(root: _HtmlElement, source_url: str) -> dict[str
     return out
 
 
-def _extract_instagram_author(markup: str) -> dict[str, str | None]:
+def _instagram_username_from_url(*urls: str | None) -> str | None:
+    for url in urls:
+        if not url:
+            continue
+        match = re.search(
+            r"(?:https?://)?(?:www\.)?instagram\.com/([\w.]+)/(?:p|reel|reels)/",
+            url,
+            re.I,
+        )
+        if match:
+            candidate = match.group(1)
+            if candidate.lower() not in {"p", "reel", "reels"}:
+                return candidate
+    return None
+
+
+def _extract_instagram_author(
+    markup: str,
+    *,
+    source_url: str | None = None,
+    final_url: str | None = None,
+) -> dict[str, str | None]:
     og_title = _meta_content(markup, prop="og:title")
     og_desc = _meta_content(markup, prop="og:description")
     name = None
-    handle = None
-    title_match = re.search(r"^(.+?)\s+\(@([\w.]+)\)", og_title or "")
-    if title_match:
-        name = clean_text(title_match.group(1))
-        handle = title_match.group(2)
-    if not handle:
-        for source in (og_desc, og_title):
-            at_match = re.search(r"@([\w.]+)", source or "")
-            if at_match:
-                handle = at_match.group(1)
-                break
-    if not handle:
-        on_ig = re.search(r"([\w.]+)\s+on\s+Instagram", og_desc or "", re.I)
-        if on_ig:
-            handle = on_ig.group(1).lstrip("@")
+    handle = _instagram_username_from_url(final_url, source_url)
+    if not handle and og_desc:
+        credit = re.search(
+            r"(?:likes?|comments?|commentaires?|j'?aime)[,\s-]*-\s*([\w.]+)\s+(?:on|le)\s",
+            og_desc,
+            re.I,
+        )
+        if credit:
+            handle = credit.group(1).lstrip("@")
+    title_paren = re.search(r"^(.+?)\s+\(@([\w.]+)\)", og_title or "")
+    if title_paren:
+        paren_name = clean_text(title_paren.group(1))
+        paren_handle = title_paren.group(2)
+        if not handle:
+            handle = paren_handle
+            name = paren_name
+        elif paren_handle.lower() == handle.lower():
+            name = paren_name
+    if og_title and handle:
+        sur_match = re.search(r"^(.+?)\s+(?:sur|on)\s+Instagram", og_title, re.I)
+        if sur_match:
+            candidate = clean_text(sur_match.group(1))
+            if candidate and candidate.lower() == handle.lower():
+                name = candidate
     if not name and handle:
         name = f"@{handle}"
     return {"name": name, "handle": handle, "url": None}
@@ -553,21 +583,32 @@ def _instagram_caption_from_og(description: str) -> str:
     if not description:
         return ""
     quoted = re.search(
-        r"on Instagram:\s*(?:[«\"'](.+?)[»\"']|\u201c(.+?)\u201d)",
+        r"(?:on\s+Instagram|le\s+[^:]+):\s*(?:[«\"'](.+?)[»\"']|\u201c(.+?)\u201d)",
         description,
         re.I | re.S,
     )
     if quoted:
         return clean_text(quoted.group(1) or quoted.group(2) or "")
     stripped = re.sub(
-        r"^[\d,\.\s\u00a0]*[kKmM]?\s*(?:likes?|comments?|j'?aime|commentaires?)[,\s-]*",
+        r"^(?:"
+        r"\d[\d,\.\s\u00a0]*[kKmM]?\s*(?:likes?|j'?aime)[,\s]*"
+        r")?"
+        r"(?:"
+        r"\d[\d,\.\s\u00a0]*[kKmM]?\s*(?:comments?|commentaires?)[,\s]*"
+        r")?"
+        r"(?:-\s*)?",
         "",
         description,
-        count=2,
+        count=1,
         flags=re.I,
     )
-    stripped = re.sub(r"^@[\w.]+\s+on Instagram:\s*", "", stripped, flags=re.I)
-    stripped = re.sub(r"^[\w.]+\s+on Instagram:\s*", "", stripped, flags=re.I)
+    stripped = re.sub(
+        r"^[\w.]+\s+(?:on\s+Instagram|le\s+[^:]+):\s*",
+        "",
+        stripped,
+        count=1,
+        flags=re.I,
+    )
     return clean_text(stripped.strip(" \"'«»"))
 
 
@@ -793,6 +834,8 @@ def _extract_author(
     *,
     platform: str = "",
     reddit_fields: dict[str, Any] | None = None,
+    source_url: str | None = None,
+    final_url: str | None = None,
 ) -> dict[str, str | None]:
     if reddit_fields and isinstance(reddit_fields.get("author"), dict):
         author = reddit_fields["author"]
@@ -803,9 +846,11 @@ def _extract_author(
                 "url": author.get("url"),
             }
     if platform == "instagram":
-        ig_author = _extract_instagram_author(markup)
-        if ig_author.get("name") or ig_author.get("handle"):
-            return ig_author
+        return _extract_instagram_author(
+            markup,
+            source_url=source_url,
+            final_url=final_url,
+        )
     name = None
     for pattern in _AUTHOR_SELECTORS:
         match = pattern.search(markup or "")
@@ -1024,6 +1069,8 @@ def parse_cloak_html(
         nodes,
         platform=platform,
         reddit_fields=reddit_fields,
+        source_url=source_url,
+        final_url=final_url,
     )
     published_at = _extract_published_at(markup, nodes, reddit_fields=reddit_fields)
     metrics = _extract_metrics(
