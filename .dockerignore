@@ -1,0 +1,57 @@
+.git
+.github
+.worktrees
+.gitignore
+.dockerignore
+.env
+.env.*
+!.env.example
+
+# Python / build caches
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg
+.venv/
+venv/
+ENV/
+
+# Local runtime artifacts (never bake into the image)
+browser-profiles/
+media-browser-profiles/
+profiles/
+cookies/
+*.cookies
+*.cookie
+download-history/
+history.json
+runtime/
+.runs/
+data/
+*.mp4
+*.webm
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+
+# Editor / OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Tests are not required inside the runtime image
+tests/

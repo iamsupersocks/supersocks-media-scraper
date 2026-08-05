@@ -254,7 +254,15 @@ def fetch_with_cloak(
             )
         except BrowserFetchError:
             raise
-        except RuntimeError as exc:
-            raise BrowserFetchError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - wrap Playwright/Cloak dumps
+            from .sanitize import sanitize_browser_error
+
+            # Strip the shared "cloak media render failed:" prefix for the
+            # exception message; adapters re-apply their own public wording.
+            message = sanitize_browser_error(exc, context="render")
+            prefix = "cloak media render failed: "
+            if message.startswith(prefix):
+                message = message[len(prefix) :]
+            raise BrowserFetchError(message) from exc
     finally:
         semaphore.release()

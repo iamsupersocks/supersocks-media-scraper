@@ -21,14 +21,19 @@ from .profiles import (
     profile_status,
     resolve_profile_dir,
 )
-from .sanitize import redact_secrets, sanitize_url
+from .sanitize import sanitize_browser_error, sanitize_url, scrub_public_warning
 from .schema import build_action_required
+
 
 WarmupFetcher = Callable[..., Any]
 
 
 def _native_gui_platform() -> bool:
     return sys.platform in {"darwin", "win32", "cygwin"}
+
+
+def _public_warnings(warnings: list[str]) -> list[str]:
+    return [scrub_public_warning(str(w)) for w in warnings]
 
 
 def run_warmup(
@@ -53,7 +58,9 @@ def run_warmup(
             "wait_seconds": float(wait_seconds),
             "profile": profile_status(""),
             "profile_created": False,
-            "warnings": [f"unsupported warm-up platform: {platform_id or '(empty)'}"],
+            "warnings": _public_warnings(
+                [f"unsupported warm-up platform: {platform_id or '(empty)'}"]
+            ),
             "action_required": None,
         }
 
@@ -73,11 +80,13 @@ def run_warmup(
             "wait_seconds": float(wait_seconds),
             "profile": profile_status(""),
             "profile_created": False,
-            "warnings": [
-                "no media profile configured; set MEDIA_BROWSER_PROFILES_ROOT "
-                f"(uses {{root}}/{platform_id}), MEDIA_BROWSER_PROFILE_DIR, "
-                "BROWSER_PROFILE_DIR, or pass --browser-profile-dir"
-            ],
+            "warnings": _public_warnings(
+                [
+                    "no media profile configured; set MEDIA_BROWSER_PROFILES_ROOT "
+                    f"(uses {{root}}/{platform_id}), MEDIA_BROWSER_PROFILE_DIR, "
+                    "BROWSER_PROFILE_DIR, or pass --browser-profile-dir"
+                ]
+            ),
             "action_required": build_action_required(platform=platform_id, reason="login"),
             "instructions": (
                 "Configure an operator-owned profile directory, re-run with --create-profile, "
@@ -97,10 +106,12 @@ def run_warmup(
             "wait_seconds": float(wait_seconds),
             "profile": profile_status(profile_dir),
             "profile_created": False,
-            "warnings": [
-                "media Cloak profile directory is absent; re-run with --create-profile "
-                "to create it explicitly, then complete login/consent manually"
-            ],
+            "warnings": _public_warnings(
+                [
+                    "media Cloak profile directory is absent; re-run with --create-profile "
+                    "to create it explicitly, then complete login/consent manually"
+                ]
+            ),
             "action_required": build_action_required(platform=platform_id, reason="login"),
             "instructions": (
                 "Create the platform profile explicitly, open headed warm-up, "
@@ -117,10 +128,12 @@ def run_warmup(
             "wait_seconds": float(wait_seconds),
             "profile": profile_status(profile_dir),
             "profile_created": created,
-            "warnings": [
-                "cloakbrowser not installed; install the browser extra: "
-                "pip install 'supersocks-media-scraper[browser]'"
-            ],
+            "warnings": _public_warnings(
+                [
+                    "cloakbrowser not installed; install the browser extra: "
+                    "pip install 'supersocks-media-scraper[browser]'"
+                ]
+            ),
             "action_required": None,
         }
 
@@ -151,7 +164,7 @@ def run_warmup(
             "linux_display_required": not _native_gui_platform(),
             "profile": profile_status(profile_dir),
             "profile_created": created,
-            "warnings": [f"media warm-up failed: {redact_secrets(str(exc))}"],
+            "warnings": _public_warnings([sanitize_browser_error(exc, context="warmup")]),
             "action_required": build_action_required(platform=platform_id, reason="challenge"),
             "instructions": (
                 "On Linux, attach an existing DISPLAY/Xvfb before headed warm-up. "
@@ -192,7 +205,7 @@ def run_warmup(
         "profile_created": created,
         "gate_detected": gate,
         "action_required": action,
-        "warnings": warnings,
+        "warnings": _public_warnings(warnings),
         "instructions": (
             "Complete any login, MFA, CAPTCHA, consent, or challenge manually in the "
             "headed browser. This tool never automates those steps and never prints "

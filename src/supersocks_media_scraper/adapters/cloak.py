@@ -8,7 +8,7 @@ from typing import Any, Callable, Mapping
 
 from ..browser import cloakbrowser_available
 from ..profiles import resolve_profile_dir
-from ..sanitize import redact_secrets
+from ..sanitize import sanitize_browser_error
 from ..schema import build_action_required, error_result
 from ._util import detect_platform, is_safe_public_http_url
 from .cloak_html import CLOAK_PLATFORMS, parse_cloak_html
@@ -113,7 +113,7 @@ def extract_cloak(
         return error_result(
             platform=platform_id,
             source_url=url,
-            warnings=[f"cloak media render failed: {redact_secrets(str(exc))}"],
+            warnings=[sanitize_browser_error(exc, context="render")],
             fetch_method="cloak-profile" if profile_dir else "cloak",
         )
 

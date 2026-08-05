@@ -225,6 +225,57 @@ supersocks-media-scraper 'https://x.com/example/status/1234567890123456789'
   `WAYLAND_DISPLAY` yourself (for example attach an existing Xvfb session).
 - **This package does not install or start Xvfb.**
 
+## Docker (official runtime)
+
+Prerequisites on the host:
+
+- Docker Engine (Linux) with permission to build and run images
+- For X reads: export `TWITTER_AUTH_TOKEN` and `TWITTER_CT0` in your shell
+  (values never appear in images, READMEs, or scraper JSON)
+- Optional named volume for Reddit / Instagram / Facebook persistent profiles
+
+Build the official Python 3.12 slim image (installs CloakBrowser/Chromium Linux
+dependencies, the local package with `[all]`, and runs as a non-root user with a
+writable Cloak cache + `MEDIA_BROWSER_PROFILES_ROOT`):
+
+```bash
+docker build -t supersocks-media-scraper:local .
+docker run --rm supersocks-media-scraper:local --version
+```
+
+Scrape a public URL headless (cold profile — often returns `needs-human` until
+you warm a profile on a machine with a real display):
+
+```bash
+docker run --rm \
+  -v sms-media-profiles:/home/scraper/media-browser-profiles \
+  supersocks-media-scraper:local \
+  'https://www.reddit.com/r/ModSupport/comments/1rshtk3/how_do_i_post_an_announcement_i_dont_see_anywhere/'
+```
+
+X credentials as environment variables (pass from your shell; do not bake them
+into the image or print them):
+
+```bash
+docker run --rm \
+  -e TWITTER_AUTH_TOKEN \
+  -e TWITTER_CT0 \
+  supersocks-media-scraper:local \
+  'https://x.com/example/status/1234567890123456789'
+```
+
+Named-volume profile persistence for Reddit / Instagram / Facebook maps to
+`MEDIA_BROWSER_PROFILES_ROOT/{reddit|instagram|facebook}` inside the container
+(`/home/scraper/media-browser-profiles/...`). Reuse the same volume across runs.
+
+**Headless cold profile vs headed warm-up:** the standard image is headless. A
+cold profile does not bypass Instagram / Facebook / Reddit login, consent, or
+challenge gates. Manual headed warm-up (`--warmup` / `--headed`) requires a
+display attached outside this headless container (for example X11/Wayland/Xvfb
+on the host, or a custom image/session you manage). Docker does **not** bypass
+platform gates, CAPTCHA, MFA, or rate limits. This image has no fake healthcheck
+and never automates login.
+
 ## Troubleshooting
 
 | Symptom | What to check |
@@ -236,6 +287,8 @@ supersocks-media-scraper 'https://x.com/example/status/1234567890123456789'
 | Meta/Reddit `needs-human` | Run `--warmup <platform> --create-profile`, complete login/consent/challenge manually, retry. |
 | Rate-limit / 429 / “Prove your humanity” | Stop and wait; do not automate evasion. `action_required.reason` may be `rate-limit` or `challenge`. |
 | Headed warm-up fails on Linux | Attach an existing `DISPLAY` / `WAYLAND_DISPLAY` / Xvfb session first. |
+| Docker browser launch / missing libraries | Use the official Dockerfile in this repo (it installs Chromium Linux deps). Public JSON warnings stay actionable and never dump local paths or launch command lines. |
+| Docker headed warm-up | Not supported in the standard headless image; use a host display outside the container. |
 
 ## License and credits
 
