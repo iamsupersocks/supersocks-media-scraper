@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Example Reddit Post</title>
+  <meta property="og:title" content="Wrong cached title" />
+  <meta property="og:image" content="https://i.redd.it/example.png" />
+</head>
+<body>
+  <shreddit-post id="t3_wrongid" author="wrong_user" score="1" comment-count="1">
+    <div slot="text-body">Wrong post body</div>
+  </shreddit-post>
+  <shreddit-post id="t3_abc123" author="example_user" created-timestamp="2026-01-15T12:00:00Z" score="42" comment-count="7" post-title="Example Reddit Post">
+    <div slot="text-body">Visible public body from shreddit slot=text-body only.</div>
+  </shreddit-post>
+  <shreddit-comment author="commenter1" created-timestamp="2026-01-15T12:05:00Z">
+    <div slot="text-body">First visible comment</div>
+  </shreddit-comment>
+  <shreddit-comment author="bot">
+    <div slot="text-body">Continuer ce fil de discussion</div>
+  </shreddit-comment>
+  <shreddit-comment author="promo">
+    <div slot="text-body">Recommended for you: join our community</div>
+  </shreddit-comment>
+  <div data-testid="comment" class="Comment">
+    <a class="author">legacy_commenter</a>
+    <p>Legacy fallback comment</p>
+  </div>
+</body>
+</html>

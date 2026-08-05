@@ -21,6 +21,18 @@ def test_redact_secrets_masks_tokens_and_profile_hints() -> None:
     assert "[REDACTED]" in cleaned
 
 
+def test_redact_secrets_masks_js_challenge_and_query_tokens() -> None:
+    raw = (
+        "cloak failed js_challenge=abc123xyz "
+        "fetch https://example.com/path?token=secret123&code=oauth456"
+    )
+    cleaned = redact_secrets(raw)
+    assert "abc123xyz" not in cleaned
+    assert "secret123" not in cleaned
+    assert "oauth456" not in cleaned
+    assert "[REDACTED]" in cleaned
+
+
 def test_make_result_stable_keys_and_scrub() -> None:
     result = make_result(
         status="ok",

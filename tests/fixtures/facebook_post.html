@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Example Page post</title>
+  <meta property="og:description" content="Visible Facebook post body from metadata smoke fixture." />
+  <meta property="og:image" content="https://scontent.example/fb.jpg" />
+</head>
+<body>
+  <div data-ad-preview="message">Duplicate body in container should not override metadata.</div>
+  <span aria-label="9,4 K réactions">React</span>
+  <span aria-label="120 commentaires">Comments</span>
+  <span aria-label="32 partages">Share</span>
+  <div role="article" aria-label="Commentaire de Alice Dupont">
+    <span>Alice comment text visible</span>
+    <button>J'aime</button>
+    <button>Répondre</button>
+  </div>
+  <div role="article" aria-label="Comment by Bob Smith">
+    <span>Bob comment text visible</span>
+    <button>Like</button>
+  </div>
+  <div role="article" aria-label="Controls only">
+    <button>Like</button>
+  </div>
+</body>
+</html>

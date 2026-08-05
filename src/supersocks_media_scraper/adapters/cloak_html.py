@@ -76,12 +76,47 @@ _RATE_LIMIT_MARKERS = (
     "rate-limit",
     "you are being rate limited",
     "try again later",
-    "429",
 )
 
 _REDDIT_SHREDDIT_TITLE = re.compile(
     r"<shreddit-title[^>]*title=[\"']([^\"']+)[\"']",
     re.I,
+)
+_REDDIT_SHREDDIT_POST = re.compile(
+    r"<shreddit-post\b([^>]*?)(?:>(.*?)</shreddit-post>|/>)",
+    re.I | re.S,
+)
+_REDDIT_TEXT_BODY = re.compile(
+    r"<[^>]+slot=[\"']text-body[\"'][^>]*>(.*?)</[^>]+>",
+    re.I | re.S,
+)
+_REDDIT_SHREDDIT_COMMENT = re.compile(
+    r"<shreddit-comment\b([^>]*?)(?:>(.*?)</shreddit-comment>|/>)",
+    re.I | re.S,
+)
+_REDDIT_COMMENT_SKIP = (
+    "continuer ce fil",
+    "continue this thread",
+    "recommended for you",
+    "recommendations",
+    "promoted",
+    "publicité",
+    "advertisement",
+    "banner",
+)
+_OG_IG_LIKES = re.compile(
+    r"(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*(?:likes?|j'?aime)",
+    re.I,
+)
+_OG_IG_COMMENTS = re.compile(
+    r"(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*(?:comments?|commentaires?)",
+    re.I,
+)
+_FB_COMMENT_ARTICLE = re.compile(
+    r"<(?:div|article)\b(?=[^>]*\brole=[\"']article[\"'])(?=[^>]*"
+    r"aria-label=[\"'](?:Commentaire de|Comment by)\s+([^\"']+)[\"'])[^>]*>"
+    r"(.*?)</(?:div|article)>",
+    re.I | re.S,
 )
 _REDDIT_POST_CONTENT = re.compile(
     r"<(?:div|p|h1)[^>]*(?:slot=[\"']text-body[\"']|id=[\"']post-title[\"']|data-testid=[\"']post-content[\"']|"
@@ -133,19 +168,23 @@ _OG_VIDEO = re.compile(
 )
 _METRIC_PATTERNS = {
     "likes": re.compile(
-        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.]*)\s*(?:likes?|j'?aime|reactions?)[\"']",
+        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*"
+        r"(?:likes?|j'?aime|reactions?|réactions?)[\"']",
         re.I,
     ),
     "comments": re.compile(
-        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.]*)\s*(?:comments?|commentaires?)[\"']",
+        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*"
+        r"(?:comments?|commentaires?)[\"']",
         re.I,
     ),
     "shares": re.compile(
-        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.]*)\s*(?:shares?|partages?)[\"']",
+        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*"
+        r"(?:shares?|partages?)[\"']",
         re.I,
     ),
     "views": re.compile(
-        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.]*)\s*(?:views?|vues?)[\"']",
+        r"(?:aria-label|title)=[\"'][^\"']*?(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*"
+        r"(?:views?|vues?)[\"']",
         re.I,
     ),
 }
@@ -264,28 +303,237 @@ def detect_gate(
 
 
 def _parse_count(raw: str) -> int | None:
-    text = (raw or "").strip().lower().replace(",", "").replace("\u00a0", "")
+    text = (raw or "").strip().lower().replace("\u00a0", " ")
     if not text:
         return None
     mult = 1
-    if text.endswith("k"):
+    if re.search(r"\s*k\s*$", text) or text.endswith("k"):
         mult = 1_000
-        text = text[:-1]
-    elif text.endswith("m"):
+        text = re.sub(r"\s*k\s*$", "", text).rstrip("k")
+    elif re.search(r"\s*m\s*$", text) or text.endswith("m"):
         mult = 1_000_000
-        text = text[:-1]
+        text = re.sub(r"\s*m\s*$", "", text).rstrip("m")
+    text = text.replace(" ", "")
+    if "," in text and "." not in text:
+        text = text.replace(",", ".")
+    else:
+        text = text.replace(",", "")
     try:
         return int(float(text) * mult)
     except ValueError:
         return None
 
 
-def _extract_metrics(markup: str) -> dict[str, int | None]:
+def _reddit_post_id_from_url(url: str) -> str | None:
+    match = re.search(r"/comments/([a-z0-9]+)/", url or "", re.I)
+    return match.group(1).lower() if match else None
+
+
+def _tag_attr(attrs: str, name: str) -> str | None:
+    pattern = rf"{re.escape(name)}=[\"']([^\"']*)[\"']"
+    match = re.search(pattern, attrs or "", re.I)
+    return match.group(1) if match else None
+
+
+def _select_shreddit_post(markup: str, source_url: str) -> tuple[str, str] | None:
+    post_id = _reddit_post_id_from_url(source_url)
+    fallback: tuple[str, str] | None = None
+    for match in _REDDIT_SHREDDIT_POST.finditer(markup or ""):
+        attrs = match.group(1)
+        inner = match.group(2) or ""
+        if fallback is None:
+            fallback = (attrs, inner)
+        if post_id:
+            pid = (_tag_attr(attrs, "id") or _tag_attr(attrs, "post-id") or "").lower()
+            if post_id in pid:
+                return (attrs, inner)
+    return fallback
+
+
+def _reddit_text_bodies(html_fragment: str) -> list[str]:
+    bodies: list[str] = []
+    for match in _REDDIT_TEXT_BODY.finditer(html_fragment or ""):
+        text = clean_text(match.group(1))
+        if text and text not in bodies:
+            bodies.append(text)
+    return bodies
+
+
+def _extract_reddit_post_fields(markup: str, source_url: str) -> dict[str, Any]:
+    selected = _select_shreddit_post(markup, source_url)
+    if not selected:
+        return {}
+    attrs, inner = selected
+    out: dict[str, Any] = {}
+    author = _tag_attr(attrs, "author")
+    if author:
+        out["author"] = {"name": author, "handle": author, "url": None}
+    ts = _tag_attr(attrs, "created-timestamp")
+    if ts:
+        out["published_at"] = ts
+    metrics: dict[str, int | None] = {"likes": None, "comments": None, "shares": None, "views": None}
+    score = _tag_attr(attrs, "score")
+    comment_count = _tag_attr(attrs, "comment-count")
+    if score is not None:
+        try:
+            metrics["likes"] = int(score)
+        except ValueError:
+            metrics["likes"] = _parse_count(score)
+    if comment_count is not None:
+        try:
+            metrics["comments"] = int(comment_count)
+        except ValueError:
+            metrics["comments"] = _parse_count(comment_count)
+    out["metrics"] = metrics
+    post_title = _tag_attr(attrs, "post-title") or ""
+    bodies = _reddit_text_bodies(inner)
+    if post_title and post_title not in bodies:
+        bodies.insert(0, clean_text(post_title))
+    out["body"] = "\n\n".join(bodies).strip()
+    return out
+
+
+def _extract_instagram_author(markup: str) -> dict[str, str | None]:
+    og_title = _meta_content(markup, prop="og:title")
+    og_desc = _meta_content(markup, prop="og:description")
+    name = None
+    handle = None
+    title_match = re.search(r"^(.+?)\s+\(@([\w.]+)\)", og_title or "")
+    if title_match:
+        name = clean_text(title_match.group(1))
+        handle = title_match.group(2)
+    if not handle:
+        for source in (og_desc, og_title):
+            at_match = re.search(r"@([\w.]+)", source or "")
+            if at_match:
+                handle = at_match.group(1)
+                break
+    if not handle:
+        on_ig = re.search(r"([\w.]+)\s+on\s+Instagram", og_desc or "", re.I)
+        if on_ig:
+            handle = on_ig.group(1).lstrip("@")
+    if not name and handle:
+        name = f"@{handle}"
+    return {"name": name, "handle": handle, "url": None}
+
+
+def _instagram_caption_from_og(description: str) -> str:
+    if not description:
+        return ""
+    quoted = re.search(
+        r"on Instagram:\s*(?:[«\"'](.+?)[»\"']|\u201c(.+?)\u201d)",
+        description,
+        re.I | re.S,
+    )
+    if quoted:
+        return clean_text(quoted.group(1) or quoted.group(2) or "")
+    stripped = re.sub(
+        r"^[\d,\.\s\u00a0]*[kKmM]?\s*(?:likes?|comments?|j'?aime|commentaires?)[,\s-]*",
+        "",
+        description,
+        count=2,
+        flags=re.I,
+    )
+    stripped = re.sub(r"^@[\w.]+\s+on Instagram:\s*", "", stripped, flags=re.I)
+    stripped = re.sub(r"^[\w.]+\s+on Instagram:\s*", "", stripped, flags=re.I)
+    return clean_text(stripped.strip(" \"'«»"))
+
+
+def _fb_comment_text(block: str) -> str:
+    cleaned = re.sub(r"<button\b[^>]*>.*?</button>", " ", block or "", flags=re.I | re.S)
+    cleaned = re.sub(r'\brole=[\"\'](?:button|menu|toolbar)[\"\'][^>]*>.*?(?=<|$)', " ", cleaned, flags=re.I | re.S)
+    return clean_text(cleaned)
+
+
+def _extract_facebook_comments(markup: str) -> list[dict[str, Any]]:
+    comments: list[dict[str, Any]] = []
+    for match in _FB_COMMENT_ARTICLE.finditer(markup or ""):
+        author = clean_text(match.group(1)) or None
+        text = _fb_comment_text(match.group(2))
+        if not author or not text or len(text) < 2:
+            continue
+        comments.append({"author": author, "text": trim_text(text, 500), "published_at": None})
+        if len(comments) >= MAX_COMMENTS:
+            break
+    return comments
+
+
+def _extract_reddit_comments(markup: str, source_url: str) -> list[dict[str, Any]]:
+    comments: list[dict[str, Any]] = []
+    for match in _REDDIT_SHREDDIT_COMMENT.finditer(markup or ""):
+        attrs = match.group(1)
+        inner = match.group(2) or ""
+        author = _tag_attr(attrs, "author")
+        bodies = _reddit_text_bodies(inner)
+        text = " ".join(bodies) if bodies else clean_text(inner)
+        if not text or len(text) < 2:
+            continue
+        lower = text.lower()
+        if any(skip in lower for skip in _REDDIT_COMMENT_SKIP):
+            continue
+        comments.append(
+            {
+                "author": author,
+                "text": trim_text(text, 500),
+                "published_at": _tag_attr(attrs, "created-timestamp"),
+            }
+        )
+        if len(comments) >= MAX_COMMENTS:
+            break
+    if comments:
+        return comments
+    return _extract_generic_comments(markup)
+
+
+def _extract_generic_comments(markup: str) -> list[dict[str, Any]]:
+    comments: list[dict[str, Any]] = []
+    for match in _COMMENT_BLOCK.finditer(markup or ""):
+        block = match.group(1)
+        text = clean_text(block)
+        if not text or len(text) < 2:
+            continue
+        author = None
+        author_match = re.search(
+            r"<(?:a|span)[^>]*(?:class=[\"'][^\"']*(?:author|Author|username)[^\"']*[\"'])[^>]*>(.*?)</(?:a|span)>",
+            block,
+            re.I | re.S,
+        )
+        if author_match:
+            author = clean_text(author_match.group(1)) or None
+        comments.append({"author": author, "text": trim_text(text, 500), "published_at": None})
+        if len(comments) >= MAX_COMMENTS:
+            break
+    return comments
+
+
+def _extract_metrics(
+    markup: str,
+    *,
+    platform: str = "",
+    og_description: str = "",
+    reddit_fields: dict[str, Any] | None = None,
+) -> dict[str, int | None]:
     out: dict[str, int | None] = {"likes": None, "comments": None, "shares": None, "views": None}
+    if reddit_fields and isinstance(reddit_fields.get("metrics"), dict):
+        for key in out:
+            value = reddit_fields["metrics"].get(key)
+            if value is not None:
+                out[key] = value
     for key, pattern in _METRIC_PATTERNS.items():
+        if out[key] is not None:
+            continue
         match = pattern.search(markup or "")
         if match:
             out[key] = _parse_count(match.group(1))
+    if platform == "instagram" and og_description:
+        if out["likes"] is None:
+            match = _OG_IG_LIKES.search(og_description)
+            if match:
+                out["likes"] = _parse_count(match.group(1))
+        if out["comments"] is None:
+            match = _OG_IG_COMMENTS.search(og_description)
+            if match:
+                out["comments"] = _parse_count(match.group(1))
     return out
 
 
@@ -312,28 +560,40 @@ def _extract_media(markup: str) -> list[dict[str, Any]]:
     return media
 
 
-def _extract_comments(markup: str) -> list[dict[str, Any]]:
-    comments: list[dict[str, Any]] = []
-    for match in _COMMENT_BLOCK.finditer(markup or ""):
-        block = match.group(1)
-        text = clean_text(block)
-        if not text or len(text) < 2:
-            continue
-        author = None
-        author_match = re.search(
-            r"<(?:a|span)[^>]*(?:class=[\"'][^\"']*(?:author|Author|username)[^\"']*[\"'])[^>]*>(.*?)</(?:a|span)>",
-            block,
-            re.I | re.S,
-        )
-        if author_match:
-            author = clean_text(author_match.group(1)) or None
-        comments.append({"author": author, "text": trim_text(text, 500), "published_at": None})
-        if len(comments) >= MAX_COMMENTS:
-            break
-    return comments
+def _extract_comments(
+    markup: str,
+    *,
+    platform: str = "",
+    source_url: str = "",
+) -> list[dict[str, Any]]:
+    if platform == "facebook":
+        fb = _extract_facebook_comments(markup)
+        if fb:
+            return fb
+    if platform == "reddit":
+        return _extract_reddit_comments(markup, source_url)
+    return _extract_generic_comments(markup)
 
 
-def _extract_author(markup: str, nodes: list[dict[str, Any]]) -> dict[str, str | None]:
+def _extract_author(
+    markup: str,
+    nodes: list[dict[str, Any]],
+    *,
+    platform: str = "",
+    reddit_fields: dict[str, Any] | None = None,
+) -> dict[str, str | None]:
+    if reddit_fields and isinstance(reddit_fields.get("author"), dict):
+        author = reddit_fields["author"]
+        if author.get("name") or author.get("handle"):
+            return {
+                "name": author.get("name"),
+                "handle": author.get("handle"),
+                "url": author.get("url"),
+            }
+    if platform == "instagram":
+        ig_author = _extract_instagram_author(markup)
+        if ig_author.get("name") or ig_author.get("handle"):
+            return ig_author
     name = None
     for pattern in _AUTHOR_SELECTORS:
         match = pattern.search(markup or "")
@@ -373,7 +633,14 @@ def _extract_author(markup: str, nodes: list[dict[str, Any]]) -> dict[str, str |
     return {"name": name, "handle": handle, "url": None}
 
 
-def _extract_published_at(markup: str, nodes: list[dict[str, Any]]) -> str | None:
+def _extract_published_at(
+    markup: str,
+    nodes: list[dict[str, Any]],
+    *,
+    reddit_fields: dict[str, Any] | None = None,
+) -> str | None:
+    if reddit_fields and reddit_fields.get("published_at"):
+        return str(reddit_fields["published_at"])
     for pattern in _TIME_SELECTORS:
         match = pattern.search(markup or "")
         if match:
@@ -388,23 +655,46 @@ def _extract_published_at(markup: str, nodes: list[dict[str, Any]]) -> str | Non
     return None
 
 
-def _platform_body(markup: str, *, platform: str) -> str:
+def _platform_body(
+    markup: str,
+    *,
+    platform: str,
+    source_url: str = "",
+    og_description: str = "",
+    reddit_fields: dict[str, Any] | None = None,
+) -> str:
     chunks: list[str] = []
     if platform == "reddit":
-        title = _REDDIT_SHREDDIT_TITLE.search(markup or "")
-        if title:
-            chunks.append(clean_text(title.group(1)))
-        for match in _REDDIT_POST_CONTENT.finditer(markup or ""):
+        if reddit_fields and reddit_fields.get("body"):
+            chunks.append(str(reddit_fields["body"]))
+        else:
+            title = _REDDIT_SHREDDIT_TITLE.search(markup or "")
+            if title:
+                chunks.append(clean_text(title.group(1)))
+            for match in _REDDIT_POST_CONTENT.finditer(markup or ""):
+                text = clean_text(match.group(1))
+                if text and text not in chunks:
+                    chunks.append(text)
+            if source_url:
+                selected = _select_shreddit_post(markup, source_url)
+                if selected:
+                    bodies = _reddit_text_bodies(selected[1])
+                    for text in bodies:
+                        if text not in chunks:
+                            chunks.append(text)
+    elif platform == "instagram":
+        caption = _instagram_caption_from_og(og_description)
+        if caption:
+            chunks.append(caption)
+        for match in _IG_ARTICLE.finditer(markup or ""):
             text = clean_text(match.group(1))
             if text and text not in chunks:
                 chunks.append(text)
-    elif platform == "instagram":
-        for match in _IG_ARTICLE.finditer(markup or ""):
-            text = clean_text(match.group(1))
-            if text:
-                chunks.append(text)
                 break
     elif platform == "facebook":
+        og = og_description or _meta_content(markup, prop="og:description")
+        if og and len(og) >= 20:
+            chunks.append(og)
         for match in _FB_POST_TEXT.finditer(markup or ""):
             text = clean_text(match.group(1))
             if text and text not in chunks:
@@ -476,18 +766,53 @@ def parse_cloak_html(
         or _meta_content(markup, name="description")
         or _meta_content(markup, name="twitter:description")
     )
-    body = _platform_body(markup, platform=platform)
+    reddit_fields = (
+        _extract_reddit_post_fields(markup, final_url or source_url)
+        if platform == "reddit"
+        else {}
+    )
+    if platform == "reddit" and reddit_fields:
+        selected = _select_shreddit_post(markup, final_url or source_url)
+        if selected:
+            post_title = _tag_attr(selected[0], "post-title")
+            if post_title:
+                title = clean_text(post_title) or title
+            if not title:
+                match = _REDDIT_SHREDDIT_TITLE.search(selected[1] or markup or "")
+                if match:
+                    title = clean_text(match.group(1)) or title
+    body = _platform_body(
+        markup,
+        platform=platform,
+        source_url=final_url or source_url,
+        og_description=description,
+        reddit_fields=reddit_fields,
+    )
     for node in nodes:
         for key in ("articleBody", "text", "description", "caption"):
             value = clean_text(node.get(key))
             if value and value not in body:
                 body = f"{body}\n\n{value}".strip() if body else value
     text = trim_text(body or description or "", max(50, min(int(max_chars or 4000), 20_000)))
-    author = _extract_author(markup, nodes)
-    published_at = _extract_published_at(markup, nodes)
-    metrics = _extract_metrics(markup)
+    author = _extract_author(
+        markup,
+        nodes,
+        platform=platform,
+        reddit_fields=reddit_fields,
+    )
+    published_at = _extract_published_at(markup, nodes, reddit_fields=reddit_fields)
+    metrics = _extract_metrics(
+        markup,
+        platform=platform,
+        og_description=description,
+        reddit_fields=reddit_fields,
+    )
     media = _extract_media(markup)
-    comments = _extract_comments(markup)[: max(0, int(max_comments))]
+    comments = _extract_comments(
+        markup,
+        platform=platform,
+        source_url=final_url or source_url,
+    )[: max(0, int(max_comments))]
     useful = len(text) >= MIN_USEFUL_CHARS or bool(title and media)
     content_kind = infer_content_kind(final_url or source_url, platform)
 
