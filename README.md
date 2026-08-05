@@ -223,61 +223,102 @@ supersocks-media-scraper 'https://x.com/example/status/1234567890123456789'
 - Default Cloak reads run headless when a display is not forced.
 - `--headed` and `--warmup` need a real display: on Linux, set `DISPLAY` or
   `WAYLAND_DISPLAY` yourself (for example attach an existing Xvfb session).
-- **This package does not install or start Xvfb.**
+- **The Python package itself does not install or start Xvfb.** The optional
+  Docker `warmup` image does (see below).
 
-## Docker (official runtime)
+## Docker (runtime + guided warm-up)
 
 Prerequisites on the host:
 
 - Docker Engine (Linux) with permission to build and run images
 - For X reads: export `TWITTER_AUTH_TOKEN` and `TWITTER_CT0` in your shell
   (values never appear in images, READMEs, or scraper JSON)
-- Optional named volume for Reddit / Instagram / Facebook persistent profiles
+- Named volume `sms-media-profiles` for Reddit / Instagram / Facebook profiles
+  (shared by Compose `scraper` and `warmup` services)
 
-Build the official Python 3.12 slim image (installs CloakBrowser/Chromium Linux
-dependencies, the local package with `[all]`, and runs as a non-root user with a
-writable Cloak cache + `MEDIA_BROWSER_PROFILES_ROOT`):
+Two Dockerfile targets:
+
+| Target | Purpose |
+| --- | --- |
+| `runtime` (default) | Lean headless scraper (Cloak Chromium pre-cached at build) |
+| `warmup` | Same non-root user + Xvfb, openbox, x11vnc, noVNC/websockify for guided login |
+
+### One-command guided warm-up (key in hand)
+
+Warm a platform profile once, complete login/consent/challenge yourself in the
+browser, then reuse the same named volume headless:
 
 ```bash
 git clone https://github.com/iamsupersocks/supersocks-media-scraper.git
 cd supersocks-media-scraper
-docker build -t supersocks-media-scraper:local .
-docker run --rm supersocks-media-scraper:local --version
+
+# Build + start noVNC warm-up (allowlisted: reddit|instagram|facebook)
+WARMUP_PLATFORM=instagram docker compose up --build warmup
 ```
 
-Scrape a public URL headless (cold profile — often returns `needs-human` until
-you warm a profile on a machine with a real display):
+In another terminal (or local browser on the Docker host):
+
+```text
+http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale
+```
+
+Complete any login, consent, or challenge manually in the noVNC session. Stop
+the warm-up service when finished (`Ctrl+C`). Sessions can expire later — re-run
+warm-up if headless reads return `needs-human` again.
+
+**SECURITY:** noVNC has **no password**. Compose publishes **only**
+`127.0.0.1:6080`. Never change the port mapping to `0.0.0.0` / a public bind.
+Do not expose 6080 on the internet.
+
+Remote Linux host — SSH local-forward, then open the same URL on your laptop:
 
 ```bash
+ssh -L 6080:127.0.0.1:6080 user@docker-host
+```
+
+Optional longer wait (default `WARMUP_SECONDS=600`):
+
+```bash
+WARMUP_PLATFORM=reddit WARMUP_SECONDS=900 docker compose up --build warmup
+```
+
+### Resume headless scrape (same volume)
+
+```bash
+docker compose run --rm scraper \
+  'https://www.instagram.com/p/EXAMPLE/'
+```
+
+Equivalent with plain Docker after `docker build` (default target = lean runtime):
+
+```bash
+docker build -t supersocks-media-scraper:runtime .
 docker run --rm \
   -v sms-media-profiles:/home/scraper/media-browser-profiles \
-  supersocks-media-scraper:local \
+  supersocks-media-scraper:runtime \
   'https://www.reddit.com/r/ModSupport/comments/1rshtk3/how_do_i_post_an_announcement_i_dont_see_anywhere/'
 ```
 
 X credentials as environment variables (pass from your shell; do not bake them
-into the image or print them):
+into the image or print them; the scraper never inspects browser cookies):
 
 ```bash
-docker run --rm \
+docker compose run --rm \
   -e TWITTER_AUTH_TOKEN \
   -e TWITTER_CT0 \
-  supersocks-media-scraper:local \
+  scraper \
   'https://x.com/example/status/1234567890123456789'
 ```
 
-The image initializes empty per-platform profile directories on first use.
-Named-volume profile persistence for Reddit / Instagram / Facebook maps to
-`MEDIA_BROWSER_PROFILES_ROOT/{reddit|instagram|facebook}` inside the container
-(`/home/scraper/media-browser-profiles/...`). Reuse the same volume across runs.
+Profiles live under `MEDIA_BROWSER_PROFILES_ROOT/{reddit|instagram|facebook}`
+inside the container (`/home/scraper/media-browser-profiles/...`) on the shared
+named volume `sms-media-profiles`.
 
-**Headless cold profile vs headed warm-up:** the standard image is headless. A
-cold profile does not bypass Instagram / Facebook / Reddit login, consent, or
-challenge gates. Manual headed warm-up (`--warmup` / `--headed`) requires a
-display attached outside this headless container (for example X11/Wayland/Xvfb
-on the host, or a custom image/session you manage). Docker does **not** bypass
-platform gates, CAPTCHA, MFA, or rate limits. This image has no fake healthcheck
-and never automates login.
+**Headless cold profile vs headed warm-up:** a cold profile does not bypass
+Instagram / Facebook / Reddit login, consent, or challenge gates. Use the
+`warmup` Compose service (or a host display with `--warmup`) once as an
+operator. Docker does **not** bypass platform gates, CAPTCHA, MFA, or rate
+limits. Images have no fake healthcheck and never automate login.
 
 ## Troubleshooting
 
@@ -287,11 +328,12 @@ and never automates login.
 | X `needs-human` / login | Export both `TWITTER_AUTH_TOKEN` and `TWITTER_CT0`. Do not rely on browser auto-read. |
 | Missing CloakBrowser | Install `[browser]` or `[all]`. |
 | Profile not configured | Set `MEDIA_BROWSER_PROFILES_ROOT` (uses `{root}/{platform}`) or pass `--browser-profile-dir`. Use `--create-profile` during warm-up. |
-| Meta/Reddit `needs-human` | Run `--warmup <platform> --create-profile`, complete login/consent/challenge manually, retry. |
+| Meta/Reddit `needs-human` | Run `--warmup <platform> --create-profile`, or `WARMUP_PLATFORM=... docker compose up warmup`, complete login/consent/challenge manually, retry. |
 | Rate-limit / 429 / “Prove your humanity” | Stop and wait; do not automate evasion. `action_required.reason` may be `rate-limit` or `challenge`. |
-| Headed warm-up fails on Linux | Attach an existing `DISPLAY` / `WAYLAND_DISPLAY` / Xvfb session first. |
+| Headed warm-up fails on Linux | Attach an existing `DISPLAY` / `WAYLAND_DISPLAY` / Xvfb session, or use the Docker `warmup` target. |
 | Docker browser launch / missing libraries | Use the official Dockerfile in this repo (it installs Chromium Linux deps). Public JSON warnings stay actionable and never dump local paths or launch command lines. |
-| Docker headed warm-up | Not supported in the standard headless image; use a host display outside the container. |
+| Docker noVNC unreachable | Confirm Compose still maps `127.0.0.1:6080:6080`. On a remote host, use `ssh -L 6080:127.0.0.1:6080`. |
+| Invalid `WARMUP_PLATFORM` | Allowlist only: `reddit`, `instagram`, `facebook`. |
 
 ## License and credits
 

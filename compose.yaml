@@ -1,0 +1,55 @@
+# Compose: lean runtime scraper + guided noVNC warm-up.
+# Both services share one named media profile volume.
+#
+# First-use warm-up (operator login/consent/challenge once):
+#   WARMUP_PLATFORM=instagram docker compose up --build warmup
+#   open http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale
+#
+# Resume headless scrape with the same profiles:
+#   docker compose run --rm scraper 'https://www.instagram.com/p/EXAMPLE/'
+#
+# SECURITY: noVNC has no password. Compose binds 127.0.0.1:6080 only.
+# Never publish 6080 on 0.0.0.0 or a public interface. Prefer an SSH tunnel
+# when the Docker host is remote.
+
+services:
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: supersocks-media-scraper:runtime
+    environment:
+      CLOAKBROWSER_SUPPRESS_FONT_WARNING: "1"
+      MEDIA_BROWSER_PROFILES_ROOT: /home/scraper/media-browser-profiles
+      # Pass X credentials from the host shell only — never bake into images.
+      TWITTER_AUTH_TOKEN: ${TWITTER_AUTH_TOKEN:-}
+      TWITTER_CT0: ${TWITTER_CT0:-}
+    volumes:
+      - media-browser-profiles:/home/scraper/media-browser-profiles
+    # Prefer: docker compose run --rm scraper 'URL'
+    # (no ports; headless resume after a one-time warm-up)
+
+  warmup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: warmup
+    image: supersocks-media-scraper:warmup
+    environment:
+      CLOAKBROWSER_SUPPRESS_FONT_WARNING: "1"
+      MEDIA_BROWSER_PROFILES_ROOT: /home/scraper/media-browser-profiles
+      WARMUP_PLATFORM: ${WARMUP_PLATFORM:?Set WARMUP_PLATFORM to reddit, instagram, or facebook}
+      WARMUP_SECONDS: ${WARMUP_SECONDS:-600}
+      DISPLAY: ":99"
+    volumes:
+      - media-browser-profiles:/home/scraper/media-browser-profiles
+    ports:
+      # Loopback-only publish. Do not change to 0.0.0.0 / bare 6080:6080.
+      - "127.0.0.1:6080:6080"
+    init: true
+    stop_grace_period: 20s
+
+volumes:
+  media-browser-profiles:
+    name: sms-media-profiles

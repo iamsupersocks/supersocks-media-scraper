@@ -32,8 +32,8 @@ x = ["twitter-cli>=0.8.0"]
 browser = ["cloakbrowser>=0.4.8"]
 # Everything: X backend + CloakBrowser.
 all = ["twitter-cli>=0.8.0", "cloakbrowser>=0.4.8"]
-test = ["pytest>=8.0"]
-dev = ["pytest>=8.0", "build>=1.2"]
+test = ["pytest>=8.0", "pyyaml>=6.0"]
+dev = ["pytest>=8.0", "pyyaml>=6.0", "build>=1.2"]
 
 [project.scripts]
 supersocks-media-scraper = "supersocks_media_scraper.cli:main"
@@ -50,6 +50,9 @@ include = [
   "/LICENSE",
   "/pyproject.toml",
   "/.env.example",
+  "/Dockerfile",
+  "/compose.yaml",
+  "/docker",
 ]
 
 [tool.pytest.ini_options]

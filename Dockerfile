@@ -1,9 +1,11 @@
-# Official runtime image for supersocks-media-scraper.
-# Honest container: no automated login/CAPTCHA, no fake healthcheck.
-# Headless cold profiles are supported; headed warm-up needs a display
-# attached outside this standard headless image.
+# Official images for supersocks-media-scraper.
+# Targets:
+#   runtime (default) — lean headless scraper
+#   warmup            — guided noVNC headed warm-up (Xvfb + openbox + x11vnc + noVNC)
+# Honest containers: no automated login/CAPTCHA, no fake healthcheck.
+# Cloak Chromium is pre-cached at build time (no runtime download).
 
-FROM python:3.12-slim
+FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -66,3 +68,46 @@ RUN python -c "from cloakbrowser import ensure_binary; ensure_binary()"
 VOLUME ["/home/scraper/media-browser-profiles"]
 
 ENTRYPOINT ["supersocks-media-scraper"]
+
+# ---------------------------------------------------------------------------
+# Guided warm-up image: virtual display + noVNC for one-time operator login.
+# Runs as the same non-root scraper user. Never automates gates.
+# ---------------------------------------------------------------------------
+FROM runtime AS warmup
+
+USER root
+# Static noVNC assets (avoid the Debian novnc package, which pulls Node.js).
+ARG NOVNC_VERSION=1.5.0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        openbox \
+        procps \
+        websockify \
+        wget \
+        x11vnc \
+        xvfb \
+    && wget -qO /tmp/novnc.tgz \
+        "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+    && mkdir -p /usr/share/novnc \
+    && tar -xzf /tmp/novnc.tgz -C /tmp \
+    && cp -a "/tmp/noVNC-${NOVNC_VERSION}/." /usr/share/novnc/ \
+    && rm -rf /tmp/novnc.tgz "/tmp/noVNC-${NOVNC_VERSION}" /var/lib/apt/lists/*
+
+COPY docker/warmup-entrypoint.sh /usr/local/bin/warmup-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/warmup-entrypoint.sh \
+    && chown scraper:scraper /usr/local/bin/warmup-entrypoint.sh \
+    && mkdir -p /tmp/.X11-unix \
+    && chmod 1777 /tmp/.X11-unix \
+    && chown root:root /tmp/.X11-unix
+
+ENV DISPLAY=:99 \
+    WARMUP_SECONDS=600 \
+    NOVNC_WEB=/usr/share/novnc
+
+USER scraper
+EXPOSE 6080
+ENTRYPOINT ["/usr/local/bin/warmup-entrypoint.sh"]
+
+# Default `docker build` target remains the lean headless runtime.
+FROM runtime
