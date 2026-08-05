@@ -206,3 +206,48 @@ def test_parse_facebook_nested_comment_articles() -> None:
     assert "Child reply visible" in (result["comments"][1]["text"] or "")
     assert "J'aime" not in (result["comments"][1]["text"] or "")
 
+
+def test_parse_facebook_comment_dedup_cleanup_and_max() -> None:
+    """Real-capture shape: glued author/text, badge, age, score, duplicate desktop/mobile."""
+    html = """
+    <meta property="og:description" content="Visible Facebook post body from metadata smoke fixture." />
+    <div role="article" aria-label="Commentaire de Evan Thomas il y a un an">
+      <span>Evan Thomas</span><span>And this is why we all love Facebook! Great job on improving the platform</span>
+      <span>Compte vérifié</span><span>1 an</span><span>42</span>
+      <button>Voir les 3 réponses</button>
+    </div>
+    <div role="article" aria-label="Commentaire de Evan Thomas il y a un an">
+      <span>Evan Thomas</span><span>And this is why we all love Facebook! Great job on improving the platform</span>
+      <span>1 an</span>
+    </div>
+    <div role="article" aria-label="Comment by Verified User 2 days ago">
+      <span>Verified User</span><span>We shipped 2 major updates this year.</span>
+      <span>Verified account</span><span>99</span>
+    </div>
+    <div role="article" aria-label="Commentaire de Extra One">
+      <span>Extra One</span><span>Third unique comment for max_comments cap.</span>
+    </div>
+    <div role="article" aria-label="Commentaire de Extra Two">
+      <span>Extra Two</span><span>Fourth unique comment should not appear when capped.</span>
+    </div>
+    """
+    result = parse_cloak_html(
+        html,
+        platform="facebook",
+        source_url="https://www.facebook.com/example/posts/789",
+        max_comments=3,
+    )
+    assert result["status"] == "ok"
+    assert len(result["comments"]) == 3
+    assert result["comments"][0]["author"] == "Evan Thomas"
+    assert result["comments"][0]["text"] == (
+        "And this is why we all love Facebook! Great job on improving the platform"
+    )
+    assert "Compte vérifié" not in (result["comments"][0]["text"] or "")
+    assert "Voir les" not in (result["comments"][0]["text"] or "")
+    assert result["comments"][1]["author"] == "Verified User"
+    assert result["comments"][1]["text"] == "We shipped 2 major updates this year."
+    assert "Verified account" not in (result["comments"][1]["text"] or "")
+    assert not (result["comments"][1]["text"] or "").endswith("99")
+    assert result["comments"][2]["author"] == "Extra One"
+

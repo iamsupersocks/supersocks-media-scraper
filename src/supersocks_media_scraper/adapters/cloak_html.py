@@ -102,6 +102,20 @@ _OG_IG_COMMENTS = re.compile(
     re.I,
 )
 _FB_COMMENT_LABEL = re.compile(r"^(?:Commentaire de|Comment by)\s+(.+)$", re.I)
+_FB_VERIFIED_BADGE = re.compile(r"\b(?:Compte vérifié|Verified account)\b", re.I)
+_FB_VIEW_REPLIES = re.compile(
+    r"\b(?:Voir les \d+ réponses?|Voir la réponse|View \d+ replies?|View reply)\b",
+    re.I,
+)
+_FB_TERMINAL_AGE = re.compile(
+    r"\s+(?:"
+    r"\d+\s*(?:min(?:ute)?s?|heures?|jours?|semaines?|mois|ans?)"
+    r"|(?:\d+|a|an|une?)\s+(?:minute|hour|day|week|month|year)s?\s+ago"
+    r"|il y a(?: un| une|\s+\d+)?\s+(?:minute|heure|jour|semaine|mois|an)s?"
+    r")\s*$",
+    re.I,
+)
+_FB_TERMINAL_SCORE = re.compile(r"\s+\d+$")
 _FB_VISIBLE_METRICS = {
     "likes": re.compile(
         r"(?:toutes les )?r[ée]actions?\s*:?\s*(\d[\d,\.\s\u00a0]*\s*[kKmM]?)",
@@ -226,7 +240,7 @@ class _HtmlElement:
                 walk(child)
 
         walk(self)
-        return clean_text("".join(parts))
+        return _join_text_fragments(parts)
 
 
 class _CloakTreeParser(HTMLParser):
@@ -274,6 +288,13 @@ class _CloakTreeParser(HTMLParser):
         if self._skip_depth:
             return
         self._stack[-1].text_parts.append(data)
+
+
+def _join_text_fragments(parts: list[str]) -> str:
+    chunks = [part.strip() for part in parts if part and part.strip()]
+    if not chunks:
+        return ""
+    return clean_text(" ".join(chunks))
 
 
 def _parse_html_tree(markup: str) -> _HtmlElement:
@@ -553,8 +574,37 @@ def _instagram_caption_from_og(description: str) -> str:
 def _fb_author_from_label(label: str) -> str:
     text = clean_text(label)
     text = re.sub(r",?\s*\d+\s*(?:ans|years?\s*old)\b.*$", "", text, flags=re.I)
+    text = re.sub(r"\s+il y a\b.*$", "", text, flags=re.I)
+    text = re.sub(
+        r"\s+(?:\d+|a|an|une?)\s+(?:minute|hour|day|week|month|year)s?\s+ago\b.*$",
+        "",
+        text,
+        flags=re.I,
+    )
     text = re.sub(r"\s*[·•]\s*\d+.*$", "", text)
     return text.strip()
+
+
+def _clean_fb_comment_text(text: str, *, author: str | None = None) -> str:
+    text = clean_text(text)
+    if author:
+        text = re.sub(rf"^{re.escape(author)}\s*", "", text, flags=re.I)
+        text = re.sub(rf"^{re.escape(author)}(?=[A-ZÀ-ÖØ-Þ])", "", text, flags=re.I)
+    text = _FB_VERIFIED_BADGE.sub(" ", text)
+    text = _FB_VIEW_REPLIES.sub(" ", text)
+    for _ in range(2):
+        text = _FB_TERMINAL_SCORE.sub("", text)
+        text = _FB_TERMINAL_AGE.sub("", text)
+    for noise in (
+        r"\bJ['']aime\b",
+        r"\bLike\b",
+        r"\bRépondre\b",
+        r"\bReplies\b",
+        r"\bRéponses\b",
+        r"\b\d+\s*(?:réactions?|reactions?|commentaires?|comments?|partages?|shares?)\b",
+    ):
+        text = re.sub(noise, " ", text, flags=re.I)
+    return clean_text(text)
 
 
 def _fb_comment_text_from_elem(elem: _HtmlElement) -> str:
@@ -574,21 +624,16 @@ def _fb_comment_text_from_elem(elem: _HtmlElement) -> str:
             walk(child)
 
     walk(elem)
-    text = clean_text("".join(parts))
-    for noise in (
-        r"\bJ['']aime\b",
-        r"\bLike\b",
-        r"\bRépondre\b",
-        r"\bReplies\b",
-        r"\bRéponses\b",
-        r"\b\d+\s*(?:réactions?|reactions?|commentaires?|comments?|partages?|shares?)\b",
-    ):
-        text = re.sub(noise, " ", text, flags=re.I)
-    return clean_text(text)
+    return _join_text_fragments(parts)
+
+
+def _fb_comment_key(author: str | None, text: str) -> tuple[str, str]:
+    return ((author or "").casefold(), text.casefold())
 
 
 def _extract_facebook_comments(root: _HtmlElement, *, max_comments: int = MAX_COMMENTS) -> list[dict[str, Any]]:
     comments: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
     for elem in root.iter_descendants():
         if elem.tag not in {"div", "article"}:
             continue
@@ -599,9 +644,13 @@ def _extract_facebook_comments(root: _HtmlElement, *, max_comments: int = MAX_CO
         if not match:
             continue
         author = _fb_author_from_label(match.group(1)) or None
-        text = _fb_comment_text_from_elem(elem)
+        text = _clean_fb_comment_text(_fb_comment_text_from_elem(elem), author=author)
         if not author or not text or len(text) < 2:
             continue
+        key = _fb_comment_key(author, text)
+        if key in seen:
+            continue
+        seen.add(key)
         comments.append({"author": author, "text": trim_text(text, 500), "published_at": None})
         if len(comments) >= max_comments:
             break
