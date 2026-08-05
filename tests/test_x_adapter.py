@@ -34,6 +34,55 @@ def test_scrape_x_missing_credentials() -> None:
     assert "auto-reads" in result["warnings"][0].lower() or "never" in result["warnings"][0].lower()
 
 
+def test_scrape_x_never_auto_reads_browser_cookies() -> None:
+    """Protect the security contract: even with browser-cookie hints present,
+    the adapter refuses to call twitter-cli without explicit TWITTER_AUTH_TOKEN
+    + TWITTER_CT0, and strips browser auto-read hints from the child env.
+    """
+
+    def runner(argv, timeout=30, env=None):  # noqa: ANN001
+        raise AssertionError("runner must not be called without explicit credentials")
+
+    # twitter-cli is installed and knows how to auto-read browser cookies,
+    # but our package must still refuse until the operator exports both vars.
+    result = scrape_x(
+        "https://x.com/example/status/1",
+        runner=runner,
+        environ={
+            # browser auto-read hints that twitter-cli would honor:
+            "TWITTER_BROWSER": "chrome",
+            "TWITTER_CHROME_PROFILE": "/home/user/.config/google-chrome",
+            # no TWITTER_AUTH_TOKEN / TWITTER_CT0 -> must refuse
+        },
+    )
+    assert result is not None
+    assert result["status"] == "error"
+    assert result["action_required"]["reason"] == "login"
+    assert "TWITTER_AUTH_TOKEN" in result["warnings"][0]
+
+    # With credentials present, browser hints must be stripped from the child env.
+    captured: dict[str, str] = {}
+
+    def runner2(argv, timeout=30, env=None):  # noqa: ANN001
+        captured.update(env or {})
+        return CommandResult(returncode=1, stdout="", stderr="nope")
+
+    scrape_x(
+        "https://x.com/example/status/1",
+        runner=runner2,
+        environ={
+            "TWITTER_AUTH_TOKEN": "tok",
+            "TWITTER_CT0": "ct",
+            "TWITTER_BROWSER": "chrome",
+            "TWITTER_CHROME_PROFILE": "/home/user/Default",
+        },
+    )
+    assert "TWITTER_BROWSER" not in captured
+    assert "TWITTER_CHROME_PROFILE" not in captured
+    assert captured.get("TWITTER_AUTH_TOKEN") == "tok"
+    assert captured.get("TWITTER_CT0") == "ct"
+
+
 def test_scrape_x_success_sanitizes_urls() -> None:
     payload = json.loads((FIXTURES / "twitter_tweet.json").read_text(encoding="utf-8"))
 

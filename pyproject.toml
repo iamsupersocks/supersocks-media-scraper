@@ -24,7 +24,14 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# X/Twitter backend: twitter-cli provides the `twitter` executable and the
+# tweet/article/user subcommands used by the X adapter (tweet/article/user --json).
+# Kept as an extra (not a base dependency) so the default install stays light.
+x = ["twitter-cli>=0.8.0"]
+# CloakBrowser for Instagram / Facebook / Reddit.
 browser = ["cloakbrowser>=0.4.8"]
+# Everything: X backend + CloakBrowser.
+all = ["twitter-cli>=0.8.0", "cloakbrowser>=0.4.8"]
 test = ["pytest>=8.0"]
 dev = ["pytest>=8.0", "build>=1.2"]
 

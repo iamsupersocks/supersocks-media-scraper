@@ -27,18 +27,40 @@ Portions adapted from `supersocks-url-scraper` (MIT).
 
 ### Installation
 
+Extras (dépendances optionnelles) :
+
+| Extra | Contenu | Pour quoi |
+| --- | --- | --- |
+| *(aucun)* | Rien | API/CLI seule + adaptateur X (exige `twitter` sur le PATH) |
+| `[x]` | `twitter-cli` | Backend X/Twitter étendu (exécutable `twitter`) |
+| `[browser]` | `cloakbrowser` | Instagram / Facebook / Reddit via CloakBrowser |
+| `[all]` | `twitter-cli` + `cloakbrowser` | Tout le ci-dessus |
+
 ```bash
-# Depuis GitHub, avec CloakBrowser pour Instagram / Facebook / Reddit
+# Depuis GitHub (PEP 508), avec CloakBrowser pour Instagram / Facebook / Reddit
 pipx install 'supersocks-media-scraper[browser] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
+
+# Depuis GitHub, avec le backend X twitter-cli
+pipx install 'supersocks-media-scraper[x] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
+
+# Depuis GitHub, tout (X + CloakBrowser)
+pipx install 'supersocks-media-scraper[all] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
 
 # Version minimale (API/CLI + adaptateur X, sans navigateur Cloak)
 pipx install 'git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
 
 # Ou depuis un clone
 pip install -e '.[test]'
+# Backend X (twitter-cli) :
+pip install -e '.[x]'
 # CloakBrowser pour Reddit / Instagram / Facebook :
 pip install -e '.[browser]'
+# Tout :
+pip install -e '.[all]'
 ```
+
+> `clix` est un outil distinct et interne (pas sur PyPI) ; il n'est pas requis par
+> ce paquet public. Seul `twitter-cli` fournit l'exécutable `twitter`.
 
 ### Exemples
 
@@ -106,11 +128,31 @@ and YouTube remain in `supersocks-url-scraper`.
 
 ### Install
 
+Optional extras:
+
+| Extra | Contents | Use for |
+| --- | --- | --- |
+| *(none)* | Nothing | Standalone API/CLI + X adapter (requires `twitter` on PATH) |
+| `[x]` | `twitter-cli` | Extended X/Twitter backend (`twitter` executable) |
+| `[browser]` | `cloakbrowser` | Instagram / Facebook / Reddit via CloakBrowser |
+| `[all]` | `twitter-cli` + `cloakbrowser` | Everything above |
+
 ```bash
+# From GitHub (PEP 508), with CloakBrowser for Instagram / Facebook / Reddit
 pipx install 'supersocks-media-scraper[browser] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
-# or
-pip install -e '.[browser,test]'
+# From GitHub, with the X backend twitter-cli
+pipx install 'supersocks-media-scraper[x] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
+# From GitHub, everything (X + CloakBrowser)
+pipx install 'supersocks-media-scraper[all] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
+# or from a clone
+pip install -e '.[test]'
+pip install -e '.[x]'
+pip install -e '.[browser]'
+pip install -e '.[all]'
 ```
+
+> `clix` is a separate, internal tool (not on PyPI) and is not required by this
+> public package. Only `twitter-cli` provides the `twitter` executable.
 
 ### CLI / library / warm-up
 
