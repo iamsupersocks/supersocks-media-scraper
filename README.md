@@ -28,7 +28,10 @@ Portions adapted from `supersocks-url-scraper` (MIT).
 ### Installation
 
 ```bash
-# Depuis GitHub (recommandé tant que PyPI n'est pas publié)
+# Depuis GitHub, avec CloakBrowser pour Instagram / Facebook / Reddit
+pipx install 'supersocks-media-scraper[browser] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
+
+# Version minimale (API/CLI + adaptateur X, sans navigateur Cloak)
 pipx install 'git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
 
 # Ou depuis un clone
@@ -104,7 +107,7 @@ and YouTube remain in `supersocks-url-scraper`.
 ### Install
 
 ```bash
-pipx install 'git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
+pipx install 'supersocks-media-scraper[browser] @ git+https://github.com/iamsupersocks/supersocks-media-scraper.git'
 # or
 pip install -e '.[browser,test]'
 ```
