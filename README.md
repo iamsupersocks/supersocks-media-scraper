@@ -192,7 +192,7 @@ When a gate blocks the read, `status` is typically `error` or `partial` and
   "code": "needs-human",
   "reason": "login",
   "platform": "instagram",
-  "resume_instructions": "…"
+  "resume_instructions": "Run a headed warm-up, complete login manually, then retry the same URL."
 }
 ```
 
