@@ -31,8 +31,8 @@ Extras (dépendances optionnelles) :
 
 | Extra | Contenu | Pour quoi |
 | --- | --- | --- |
-| *(aucun)* | Rien | API/CLI seule + adaptateur X (exige `twitter` sur le PATH) |
-| `[x]` | `twitter-cli` | Backend X/Twitter étendu (exécutable `twitter`) |
+| *(aucun)* | Rien | API/CLI seule + adaptateur X (twitter-cli requis) |
+| `[x]` | `twitter-cli` | Backend X/Twitter étendu (`twitter` ou module `twitter_cli.cli`) |
 | `[browser]` | `cloakbrowser` | Instagram / Facebook / Reddit via CloakBrowser |
 | `[all]` | `twitter-cli` + `cloakbrowser` | Tout le ci-dessus |
 
@@ -59,8 +59,9 @@ pip install -e '.[browser]'
 pip install -e '.[all]'
 ```
 
-> `clix` est un outil distinct et interne (pas sur PyPI) ; il n'est pas requis par
-> ce paquet public. Seul `twitter-cli` fournit l'exécutable `twitter`.
+> `clix` est un outil distinct, non requis et non utilisé comme backend public.
+> Sous pipx avec l'extra `[x]`, twitter-cli est disponible même sans
+> `--include-deps` grâce au fallback `python -m twitter_cli.cli`.
 
 ### Exemples
 
@@ -89,12 +90,18 @@ export MEDIA_BROWSER_PROFILES_ROOT="$HOME/media-browser-profiles"
 supersocks-media-scraper --warmup reddit --create-profile --warmup-seconds 120
 ```
 
-X nécessite `twitter` sur le PATH **et** les deux variables opérateur :
+X nécessite twitter-cli (exécutable `twitter` **ou** module importable) **et**
+les deux variables opérateur :
 
 ```bash
 export TWITTER_AUTH_TOKEN=…   # export manuel Cookie-Editor uniquement
 export TWITTER_CT0=…
+supersocks-media-scraper 'https://x.com/example/status/123'
 ```
+
+Avec `pipx install '…[x]…'`, le binaire `twitter` peut ne pas être sur le PATH ;
+l'adaptateur X bascule alors sur `python -m twitter_cli.cli` dans le même
+environnement pipx.
 
 ### Contrat JSON (stable)
 
@@ -132,8 +139,8 @@ Optional extras:
 
 | Extra | Contents | Use for |
 | --- | --- | --- |
-| *(none)* | Nothing | Standalone API/CLI + X adapter (requires `twitter` on PATH) |
-| `[x]` | `twitter-cli` | Extended X/Twitter backend (`twitter` executable) |
+| *(none)* | Nothing | Standalone API/CLI + X adapter (requires twitter-cli) |
+| `[x]` | `twitter-cli` | Extended X/Twitter backend (`twitter` executable or `twitter_cli.cli` module) |
 | `[browser]` | `cloakbrowser` | Instagram / Facebook / Reddit via CloakBrowser |
 | `[all]` | `twitter-cli` + `cloakbrowser` | Everything above |
 
@@ -151,8 +158,9 @@ pip install -e '.[browser]'
 pip install -e '.[all]'
 ```
 
-> `clix` is a separate, internal tool (not on PyPI) and is not required by this
-> public package. Only `twitter-cli` provides the `twitter` executable.
+> `clix` is a separate tool, not required and not used as a public backend.
+> With pipx and the `[x]` extra, twitter-cli remains reachable without
+> `--include-deps` via the `python -m twitter_cli.cli` module fallback.
 
 ### CLI / library / warm-up
 
@@ -177,6 +185,8 @@ print(scrape("https://www.reddit.com/r/announcements/")["status"])
 - Detects 429, Too Many Requests, `js_challenge`, Prove your humanity.
 - Visible fields only — never claim completeness.
 - X requires operator-supplied `TWITTER_AUTH_TOKEN` + `TWITTER_CT0` only.
+  Under pipx `[x]`, the adapter falls back to `python -m twitter_cli.cli` when
+  the `twitter` executable is not on PATH.
 
 ### License
 

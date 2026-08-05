@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from unittest import mock
 
 from supersocks_media_scraper.adapters._util import CommandResult
-from supersocks_media_scraper.adapters.x import classify_x_url, scrape_x
+from supersocks_media_scraper.adapters.x import (
+    build_twitter_cli_argv,
+    classify_x_url,
+    scrape_x,
+    twitter_login_action_required,
+)
 from supersocks_media_scraper import scrape
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -32,6 +39,60 @@ def test_scrape_x_missing_credentials() -> None:
     assert result["action_required"]["reason"] == "login"
     assert "TWITTER_AUTH_TOKEN" in result["warnings"][0]
     assert "auto-reads" in result["warnings"][0].lower() or "never" in result["warnings"][0].lower()
+    resume = result["action_required"]["resume_instructions"].lower()
+    assert "twitter_auth_token" in resume
+    assert "twitter_ct0" in resume
+    assert "warmup" not in resume
+    assert "warm-up" not in resume
+
+
+def test_twitter_login_action_required_no_warmup() -> None:
+    action = twitter_login_action_required()
+    assert action is not None
+    assert action["reason"] == "login"
+    assert "TWITTER_AUTH_TOKEN" in action["resume_instructions"]
+    assert "TWITTER_CT0" in action["resume_instructions"]
+    resume = action["resume_instructions"].lower()
+    assert "warmup" not in resume
+    assert "warm-up" not in resume
+
+
+def test_build_twitter_cli_argv_prefers_executable() -> None:
+    with mock.patch("supersocks_media_scraper.adapters.x.which", return_value="/usr/bin/twitter"):
+        assert build_twitter_cli_argv(["tweet", "1", "--json"]) == ["twitter", "tweet", "1", "--json"]
+
+
+def test_build_twitter_cli_argv_module_fallback() -> None:
+    with mock.patch("supersocks_media_scraper.adapters.x.which", return_value=None), mock.patch(
+        "supersocks_media_scraper.adapters.x.twitter_cli_module_available", return_value=True
+    ):
+        assert build_twitter_cli_argv(["user", "example", "--json"]) == [
+            sys.executable,
+            "-m",
+            "twitter_cli.cli",
+            "user",
+            "example",
+            "--json",
+        ]
+
+
+def test_scrape_x_module_fallback_argv() -> None:
+    captured: list[list[str]] = []
+
+    def runner(argv, timeout=30, env=None):  # noqa: ANN001
+        captured.append(list(argv))
+        return CommandResult(returncode=1, stdout="", stderr="nope")
+
+    with mock.patch("supersocks_media_scraper.adapters.x.which", return_value=None), mock.patch(
+        "supersocks_media_scraper.adapters.x.twitter_cli_module_available", return_value=True
+    ):
+        scrape_x(
+            "https://x.com/example/status/1",
+            runner=runner,
+            environ={"TWITTER_AUTH_TOKEN": "tok", "TWITTER_CT0": "ct"},
+        )
+
+    assert captured == [[sys.executable, "-m", "twitter_cli.cli", "tweet", "1", "--json"]]
 
 
 def test_scrape_x_never_auto_reads_browser_cookies() -> None:

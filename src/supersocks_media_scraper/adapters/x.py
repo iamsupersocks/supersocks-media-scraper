@@ -1,7 +1,9 @@
 """X/Twitter reads via upstream twitter-cli when explicitly authenticated.
 
 Policy:
-- Use twitter-cli only when the binary is on PATH.
+- Resolve twitter-cli via the `twitter` executable on PATH, or via
+  ``python -m twitter_cli.cli`` when the module is importable (pipx without
+  ``--include-deps``).
 - Require explicit TWITTER_AUTH_TOKEN + TWITTER_CT0 in the process environment.
 - Never auto-read browser cookies, never print/store tokens, never invent credentials.
 
@@ -10,8 +12,10 @@ Adapted from supersocks-url-scraper social/twitter_x.py (MIT).
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
+import sys
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -57,8 +61,45 @@ _RESERVED_USER_PATHS = frozenset(
 )
 
 
+def _twitter_cli_module_spec():
+    """Return import spec for twitter_cli.cli without importing or executing it."""
+    try:
+        return importlib.util.find_spec("twitter_cli.cli")
+    except (ModuleNotFoundError, ValueError, ImportError):
+        return None
+
+
+def twitter_cli_module_available() -> bool:
+    return _twitter_cli_module_spec() is not None
+
+
 def twitter_cli_available() -> bool:
-    return which("twitter") is not None
+    return which("twitter") is not None or twitter_cli_module_available()
+
+
+def build_twitter_cli_argv(subcommand_args: list[str]) -> list[str] | None:
+    """Build argv for twitter-cli after the credentials gate."""
+    if which("twitter") is not None:
+        return ["twitter", *subcommand_args]
+    if twitter_cli_module_available():
+        return [sys.executable, "-m", "twitter_cli.cli", *subcommand_args]
+    return None
+
+
+X_LOGIN_RESUME_INSTRUCTIONS = (
+    "X/Twitter requires explicit credentials. Export TWITTER_AUTH_TOKEN and TWITTER_CT0 "
+    "from a manual Cookie-Editor export in your shell, then retry the scrape. "
+    "This package never auto-reads browser cookies. X uses shell exports only, "
+    "not a headed browser profile."
+)
+
+
+def twitter_login_action_required() -> dict[str, str] | None:
+    return build_action_required(
+        platform="x",
+        reason="login",
+        resume_instructions=X_LOGIN_RESUME_INSTRUCTIONS,
+    )
 
 
 def explicit_twitter_credentials_present(environ: dict[str, str] | None = None) -> bool:
@@ -257,19 +298,19 @@ def scrape_x(
             platform="x",
             source_url=url,
             warnings=[twitter_missing_credentials_warning()],
-            action_required=build_action_required(platform="x", reason="login"),
+            action_required=twitter_login_action_required(),
             fetch_method="twitter-cli",
         )
 
     kind, ident = classify_x_url(url)
     if kind == "article":
-        argv = ["twitter", "article", ident or url, "--json"]
+        subcommand_args = ["article", ident or url, "--json"]
         content_kind = "post"
     elif kind == "status":
-        argv = ["twitter", "tweet", ident or url, "--json"]
+        subcommand_args = ["tweet", ident or url, "--json"]
         content_kind = "post"
     elif kind == "user" and ident:
-        argv = ["twitter", "user", ident, "--json"]
+        subcommand_args = ["user", ident, "--json"]
         content_kind = "profile"
     else:
         return make_result(
@@ -283,6 +324,17 @@ def scrape_x(
             ],
             fetch_method="twitter-cli",
         )
+
+    argv = build_twitter_cli_argv(subcommand_args)
+    if argv is None:
+        if runner is None:
+            return error_result(
+                platform="x",
+                source_url=url,
+                warnings=[twitter_missing_backend_warning()],
+                fetch_method="twitter-cli",
+            )
+        argv = ["twitter", *subcommand_args]
 
     try:
         result = run_command(argv, timeout=timeout, env=env, runner=runner)

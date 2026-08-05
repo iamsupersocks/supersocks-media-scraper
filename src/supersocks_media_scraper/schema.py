@@ -40,21 +40,24 @@ def build_action_required(
     *,
     platform: str,
     reason: str,
+    resume_instructions: str | None = None,
 ) -> dict[str, str] | None:
     if reason not in GATE_REASONS:
         return None
     label = GATE_LABELS.get(reason, reason)
-    return {
-        "code": NEEDS_HUMAN_CODE,
-        "reason": reason,
-        "platform": platform,
-        "resume_instructions": (
+    if resume_instructions is None:
+        resume_instructions = (
             f"{platform} requires a human for {label}. "
             f"Run headed warm-up for the {platform} profile "
             f"(supersocks-media-scraper --warmup {platform} --create-profile), "
             "complete login/consent/challenge manually in the browser window, then retry. "
             "Never automate login, MFA, CAPTCHA, consent bypass, or rate-limit evasion."
-        ),
+        )
+    return {
+        "code": NEEDS_HUMAN_CODE,
+        "reason": reason,
+        "platform": platform,
+        "resume_instructions": resume_instructions,
     }
 
 
