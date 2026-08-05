@@ -94,6 +94,9 @@ pip install -e '.[all]'
 With pipx and the `[x]` extra, the `twitter` binary may be missing from PATH;
 the X adapter falls back to `python -m twitter_cli.cli` in the same environment.
 
+**pipx** is an isolated CLI installer: each tool gets its own virtualenv without
+touching your system Python.
+
 ## Five-minute quick start (one public URL)
 
 1. Install the recommended extra:
@@ -105,18 +108,20 @@ the X adapter falls back to `python -m twitter_cli.cli` in the same environment.
 2. Scrape a public Reddit post URL (no X credentials required):
 
    ```bash
-   export MEDIA_BROWSER_PROFILES_ROOT="$HOME/media-browser-profiles"
-   supersocks-media-scraper 'https://www.reddit.com/r/announcements/comments/…'
+   supersocks-media-scraper 'https://www.reddit.com/r/ModSupport/comments/1rshtk3/how_do_i_post_an_announcement_i_dont_see_anywhere/'
    ```
 
-3. If you get `action_required` with `needs-human`, run a headed warm-up once,
-   complete any login/consent in the browser window yourself, then retry:
+3. Only if the JSON includes `action_required` with `needs-human`, configure a
+   browser profile, run a headed warm-up once, complete any login/consent in
+   the browser window yourself, then retry the same URL:
 
    ```bash
+   export MEDIA_BROWSER_PROFILES_ROOT="$HOME/media-browser-profiles"
    # Linux: attach an existing DISPLAY or Xvfb yourself first (this package
    # never installs or starts Xvfb). Example if you already run Xvfb on :99:
    # export DISPLAY=:99
    supersocks-media-scraper --warmup reddit --create-profile --warmup-seconds 120
+   supersocks-media-scraper 'https://www.reddit.com/r/ModSupport/comments/1rshtk3/how_do_i_post_an_announcement_i_dont_see_anywhere/'
    ```
 
 Useful CLI flags (validated against the code): `--max-chars`, `--max-comments`,
@@ -128,7 +133,9 @@ Useful CLI flags (validated against the code): `--max-chars`, `--max-comments`,
 ```python
 from supersocks_media_scraper import scrape
 
-result = scrape("https://www.reddit.com/r/announcements/")
+result = scrape(
+    "https://www.reddit.com/r/ModSupport/comments/1rshtk3/how_do_i_post_an_announcement_i_dont_see_anywhere/"
+)
 print(result["status"], result["platform"], result["text"][:200])
 ```
 
@@ -193,15 +200,22 @@ When a gate blocks the read, `status` is typically `error` or `partial` and
 
 | Platform | What you must provide |
 | --- | --- |
-| **X / Twitter** | Install `[x]` or `[all]`, then export **both** `TWITTER_AUTH_TOKEN` and `TWITTER_CT0` from a manual Cookie-Editor dump. The package never auto-reads browser cookies. |
+| **X / Twitter** | Install `[x]` or `[all]`. Export **both** `TWITTER_AUTH_TOKEN` and `TWITTER_CT0` in your shell (see below). |
 | **Instagram / Facebook / Reddit** | Install `[browser]` or `[all]`. A cold profile often returns `needs-human`; one manual headed warm-up may be required. |
+
+**X credentials in plain English:** `TWITTER_AUTH_TOKEN` and `TWITTER_CT0` are two
+sensitive cookie values from your signed-in x.com session — effectively
+credentials for that account. Obtain and export them manually with a cookie
+inspection or export tool (for example Cookie-Editor). Never print, share, or
+commit them. This scraper never reads your browser cookie store; it only uses
+values you explicitly export into the shell.
 
 There is **no** automated login, MFA, CAPTCHA, consent wall, or rate-limit bypass.
 
 ```bash
-export TWITTER_AUTH_TOKEN=…   # manual Cookie-Editor export only
-export TWITTER_CT0=…
-supersocks-media-scraper 'https://x.com/example/status/123'
+export TWITTER_AUTH_TOKEN='paste-auth-token-from-x.com-cookies'
+export TWITTER_CT0='paste-ct0-from-x.com-cookies'
+supersocks-media-scraper 'https://x.com/example/status/1234567890123456789'
 ```
 
 ## Linux headless / headed notes
