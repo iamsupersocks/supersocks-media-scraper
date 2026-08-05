@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from supersocks_media_scraper.adapters.cloak_html import detect_gate, parse_cloak_html
+from supersocks_media_scraper.adapters.cloak_html import (
+    _parse_count,
+    detect_gate,
+    parse_cloak_html,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -133,3 +137,72 @@ def test_reddit_post_with_429_text_not_rate_limited() -> None:
     assert result["status"] == "ok"
     assert result["action_required"] is None
     assert "HTTP 429" in result["text"]
+
+
+def test_parse_count_us_thousands_and_european_decimal() -> None:
+    assert _parse_count("1,234") == 1234
+    assert _parse_count("9,4 K") == 9400
+    assert _parse_count("33 K") == 33_000
+
+
+def test_parse_reddit_apostrophe_in_post_title() -> None:
+    html = """
+    <shreddit-post id="t3_abc123" author="user1" post-title="It's everyone's favorite day">
+      <div slot="text-body">Body with apostrophe's intact and enough visible public text for parsing.</div>
+    </shreddit-post>
+    """
+    result = parse_cloak_html(
+        html,
+        platform="reddit",
+        source_url="https://www.reddit.com/r/test/comments/abc123/title/",
+    )
+    assert result["status"] == "ok"
+    assert result["title"] == "It's everyone's favorite day"
+    assert "apostrophe's intact" in result["text"]
+
+
+def test_parse_reddit_max_comments() -> None:
+    html = _load("reddit_shreddit_post.html")
+    extra = "".join(
+        f'<shreddit-comment author="u{i}"><div slot="comment">Comment {i}</div></shreddit-comment>'
+        for i in range(2, 8)
+    )
+    html = html.replace("</body>", f"{extra}</body>")
+    result = parse_cloak_html(
+        html,
+        platform="reddit",
+        source_url="https://www.reddit.com/r/announcements/comments/abc123/title/",
+        max_comments=3,
+    )
+    assert len(result["comments"]) == 3
+
+
+def test_parse_facebook_nested_comment_articles() -> None:
+    html = """
+    <meta property="og:description" content="Nested Facebook post body from metadata fixture." />
+    <div>Toutes les réactions : 33 K · 9,4 K commentaires · 17 K partages</div>
+    <div role="article" aria-label="Commentaire de Parent User, 42 ans">
+      <span>Parent comment visible</span>
+      <div role="article" aria-label="Commentaire de Child User">
+        <span>Child reply visible</span>
+        <button>J'aime</button>
+      </div>
+    </div>
+    """
+    result = parse_cloak_html(
+        html,
+        platform="facebook",
+        source_url="https://www.facebook.com/example/posts/456",
+    )
+    assert result["status"] == "ok"
+    assert result["metrics"]["likes"] == 33_000
+    assert result["metrics"]["comments"] == 9400
+    assert result["metrics"]["shares"] == 17_000
+    assert len(result["comments"]) == 2
+    assert result["comments"][0]["author"] == "Parent User"
+    assert "Parent comment visible" in (result["comments"][0]["text"] or "")
+    assert "Child reply visible" not in (result["comments"][0]["text"] or "")
+    assert result["comments"][1]["author"] == "Child User"
+    assert "Child reply visible" in (result["comments"][1]["text"] or "")
+    assert "J'aime" not in (result["comments"][1]["text"] or "")
+

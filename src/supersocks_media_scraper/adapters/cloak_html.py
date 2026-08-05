@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import json
 import re
+from html.parser import HTMLParser
 from typing import Any
 
 from ..schema import GATE_LABELS, build_action_required, make_result
@@ -82,18 +83,6 @@ _REDDIT_SHREDDIT_TITLE = re.compile(
     r"<shreddit-title[^>]*title=[\"']([^\"']+)[\"']",
     re.I,
 )
-_REDDIT_SHREDDIT_POST = re.compile(
-    r"<shreddit-post\b([^>]*?)(?:>(.*?)</shreddit-post>|/>)",
-    re.I | re.S,
-)
-_REDDIT_TEXT_BODY = re.compile(
-    r"<[^>]+slot=[\"']text-body[\"'][^>]*>(.*?)</[^>]+>",
-    re.I | re.S,
-)
-_REDDIT_SHREDDIT_COMMENT = re.compile(
-    r"<shreddit-comment\b([^>]*?)(?:>(.*?)</shreddit-comment>|/>)",
-    re.I | re.S,
-)
 _REDDIT_COMMENT_SKIP = (
     "continuer ce fil",
     "continue this thread",
@@ -112,21 +101,24 @@ _OG_IG_COMMENTS = re.compile(
     r"(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*(?:comments?|commentaires?)",
     re.I,
 )
-_FB_COMMENT_ARTICLE = re.compile(
-    r"<(?:div|article)\b(?=[^>]*\brole=[\"']article[\"'])(?=[^>]*"
-    r"aria-label=[\"'](?:Commentaire de|Comment by)\s+([^\"']+)[\"'])[^>]*>"
-    r"(.*?)</(?:div|article)>",
-    re.I | re.S,
-)
+_FB_COMMENT_LABEL = re.compile(r"^(?:Commentaire de|Comment by)\s+(.+)$", re.I)
+_FB_VISIBLE_METRICS = {
+    "likes": re.compile(
+        r"(?:toutes les )?r[ée]actions?\s*:?\s*(\d[\d,\.\s\u00a0]*\s*[kKmM]?)",
+        re.I,
+    ),
+    "comments": re.compile(
+        r"(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*(?:comments?|commentaires?)",
+        re.I,
+    ),
+    "shares": re.compile(
+        r"(\d[\d,\.\s\u00a0]*\s*[kKmM]?)\s*(?:shares?|partages?)",
+        re.I,
+    ),
+}
 _REDDIT_POST_CONTENT = re.compile(
     r"<(?:div|p|h1)[^>]*(?:slot=[\"']text-body[\"']|id=[\"']post-title[\"']|data-testid=[\"']post-content[\"']|"
     r"class=[\"'][^\"']*(?:Post|post-content|RichTextJSON-root)[^\"']*[\"'])[^>]*>(.*?)</(?:div|p|h1)>",
-    re.I | re.S,
-)
-_IG_ARTICLE = re.compile(r"<article\b[^>]*>(.*?)</article>", re.I | re.S)
-_FB_POST_TEXT = re.compile(
-    r"<(?:div|span)[^>]*(?:data-ad-preview=[\"']message[\"']|data-testid=[\"']post_message[\"']|"
-    r"class=[\"'][^\"']*(?:userContent|x1iorvi4)[^\"']*[\"'])[^>]*>(.*?)</(?:div|span)>",
     re.I | re.S,
 )
 _AUTHOR_SELECTORS = (
@@ -188,12 +180,6 @@ _METRIC_PATTERNS = {
         re.I,
     ),
 }
-_COMMENT_BLOCK = re.compile(
-    r"<(?:div|li|article)[^>]*(?:data-testid=[\"']comment[\"']|class=[\"'][^\"']*Comment[^\"']*[\"'])[^>]*>"
-    r"(.*?)</(?:div|li|article)>",
-    re.I | re.S,
-)
-
 
 def _strip_embedded_markup(markup: str) -> str:
     text = markup or ""
@@ -201,6 +187,104 @@ def _strip_embedded_markup(markup: str) -> str:
     for tag in ("script", "style", "noscript", "template"):
         text = re.sub(rf"<{tag}\b[^>]*>.*?</{tag}>", " ", text, flags=re.I | re.S)
     return text
+
+
+_SKIP_TAGS = frozenset({"script", "style", "noscript", "template"})
+_VOID_TAGS = frozenset(
+    {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+)
+
+
+class _HtmlElement:
+    __slots__ = ("tag", "attrs", "children", "text_parts")
+
+    def __init__(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tag = tag.lower()
+        self.attrs = {k.lower(): (v or "") for k, v in attrs}
+        self.children: list[_HtmlElement] = []
+        self.text_parts: list[str] = []
+
+    def attr(self, name: str) -> str:
+        return self.attrs.get(name.lower(), "")
+
+    def slot(self) -> str:
+        return self.attr("slot")
+
+    def iter_descendants(self) -> Any:
+        for child in self.children:
+            yield child
+            yield from child.iter_descendants()
+
+    def text_content(self, *, skip_tags: frozenset[str] = _SKIP_TAGS) -> str:
+        parts: list[str] = []
+
+        def walk(node: _HtmlElement) -> None:
+            if node.tag in skip_tags:
+                return
+            parts.extend(node.text_parts)
+            for child in node.children:
+                walk(child)
+
+        walk(self)
+        return clean_text("".join(parts))
+
+
+class _CloakTreeParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root = _HtmlElement("root", [])
+        self._stack: list[_HtmlElement] = [self.root]
+        self._skip_depth = 0
+
+    def _append(self, tag: str, attrs: list[tuple[str, str | None]]) -> _HtmlElement | None:
+        if self._skip_depth:
+            return None
+        elem = _HtmlElement(tag, attrs)
+        self._stack[-1].children.append(elem)
+        return elem
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered = tag.lower()
+        if lowered in _SKIP_TAGS:
+            self._skip_depth += 1
+            return
+        elem = self._append(lowered, attrs)
+        if elem is not None and lowered not in _VOID_TAGS:
+            self._stack.append(elem)
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.lower()
+        if lowered in _SKIP_TAGS:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+        if self._skip_depth:
+            return
+        if len(self._stack) > 1 and self._stack[-1].tag == lowered:
+            self._stack.pop()
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        lowered = tag.lower()
+        if self._skip_depth or lowered in _SKIP_TAGS:
+            return
+        if len(self._stack) > 1 and self._stack[-1].tag == lowered:
+            self._stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth:
+            return
+        self._stack[-1].text_parts.append(data)
+
+
+def _parse_html_tree(markup: str) -> _HtmlElement:
+    parser = _CloakTreeParser()
+    parser.feed(markup or "")
+    parser.close()
+    return parser.root
+
+
+def _visible_text(markup: str) -> str:
+    return clean_text(_parse_html_tree(markup).text_content())
 
 
 def _meta_content(markup: str, *, name: str | None = None, prop: str | None = None) -> str:
@@ -309,17 +393,22 @@ def _parse_count(raw: str) -> int | None:
     mult = 1
     if re.search(r"\s*k\s*$", text) or text.endswith("k"):
         mult = 1_000
-        text = re.sub(r"\s*k\s*$", "", text).rstrip("k")
+        text = re.sub(r"\s*k\s*$", "", text).rstrip("k").strip()
     elif re.search(r"\s*m\s*$", text) or text.endswith("m"):
         mult = 1_000_000
-        text = re.sub(r"\s*m\s*$", "", text).rstrip("m")
-    text = text.replace(" ", "")
-    if "," in text and "." not in text:
-        text = text.replace(",", ".")
+        text = re.sub(r"\s*m\s*$", "", text).rstrip("m").strip()
+    compact = text.replace(" ", "")
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+", compact):
+        compact = compact.replace(",", "")
+    elif "," in compact and "." not in compact:
+        if re.fullmatch(r"\d+,\d+", compact):
+            compact = compact.replace(",", ".")
+        else:
+            compact = compact.replace(",", "")
     else:
-        text = text.replace(",", "")
+        compact = compact.replace(",", "")
     try:
-        return int(float(text) * mult)
+        return int(float(compact) * mult)
     except ValueError:
         return None
 
@@ -329,67 +418,89 @@ def _reddit_post_id_from_url(url: str) -> str | None:
     return match.group(1).lower() if match else None
 
 
-def _tag_attr(attrs: str, name: str) -> str | None:
-    pattern = rf"{re.escape(name)}=[\"']([^\"']*)[\"']"
-    match = re.search(pattern, attrs or "", re.I)
-    return match.group(1) if match else None
+def _find_elements(root: _HtmlElement, tag: str) -> list[_HtmlElement]:
+    tag = tag.lower()
+    return [elem for elem in root.iter_descendants() if elem.tag == tag]
 
 
-def _select_shreddit_post(markup: str, source_url: str) -> tuple[str, str] | None:
+def _select_shreddit_post(root: _HtmlElement, source_url: str) -> _HtmlElement | None:
     post_id = _reddit_post_id_from_url(source_url)
-    fallback: tuple[str, str] | None = None
-    for match in _REDDIT_SHREDDIT_POST.finditer(markup or ""):
-        attrs = match.group(1)
-        inner = match.group(2) or ""
-        if fallback is None:
-            fallback = (attrs, inner)
-        if post_id:
-            pid = (_tag_attr(attrs, "id") or _tag_attr(attrs, "post-id") or "").lower()
-            if post_id in pid:
-                return (attrs, inner)
+    posts = _find_elements(root, "shreddit-post")
+    fallback = posts[0] if posts else None
+    if not post_id:
+        return fallback
+    for post in posts:
+        pid = (post.attr("id") or post.attr("post-id")).lower()
+        if post_id in pid:
+            return post
     return fallback
 
 
-def _reddit_text_bodies(html_fragment: str) -> list[str]:
+def _reddit_post_text_bodies(post: _HtmlElement) -> list[str]:
     bodies: list[str] = []
-    for match in _REDDIT_TEXT_BODY.finditer(html_fragment or ""):
-        text = clean_text(match.group(1))
-        if text and text not in bodies:
-            bodies.append(text)
+    for elem in post.iter_descendants():
+        if elem.tag == "shreddit-post-text-body":
+            text = elem.text_content()
+            if text and text not in bodies:
+                bodies.append(text)
+        elif elem.slot() == "text-body":
+            text = elem.text_content()
+            if text and text not in bodies:
+                bodies.append(text)
     return bodies
 
 
-def _extract_reddit_post_fields(markup: str, source_url: str) -> dict[str, Any]:
-    selected = _select_shreddit_post(markup, source_url)
-    if not selected:
+def _reddit_comment_body(comment: _HtmlElement) -> str:
+    for elem in comment.iter_descendants():
+        if elem.slot() == "comment":
+            return elem.text_content()
+    return ""
+
+
+def _should_skip_reddit_comment(text: str) -> bool:
+    lower = (text or "").lower()
+    if not lower:
+        return True
+    if any(skip in lower for skip in _REDDIT_COMMENT_SKIP):
+        return True
+    if "sml.load" in lower or "actionrow" in lower:
+        return True
+    return False
+
+
+def _extract_reddit_post_fields(root: _HtmlElement, source_url: str) -> dict[str, Any]:
+    post = _select_shreddit_post(root, source_url)
+    if post is None:
         return {}
-    attrs, inner = selected
     out: dict[str, Any] = {}
-    author = _tag_attr(attrs, "author")
+    author = post.attr("author")
     if author:
         out["author"] = {"name": author, "handle": author, "url": None}
-    ts = _tag_attr(attrs, "created-timestamp")
+    ts = post.attr("created-timestamp")
     if ts:
         out["published_at"] = ts
     metrics: dict[str, int | None] = {"likes": None, "comments": None, "shares": None, "views": None}
-    score = _tag_attr(attrs, "score")
-    comment_count = _tag_attr(attrs, "comment-count")
-    if score is not None:
+    score = post.attr("score")
+    comment_count = post.attr("comment-count")
+    if score:
         try:
             metrics["likes"] = int(score)
         except ValueError:
             metrics["likes"] = _parse_count(score)
-    if comment_count is not None:
+    if comment_count:
         try:
             metrics["comments"] = int(comment_count)
         except ValueError:
             metrics["comments"] = _parse_count(comment_count)
     out["metrics"] = metrics
-    post_title = _tag_attr(attrs, "post-title") or ""
-    bodies = _reddit_text_bodies(inner)
-    if post_title and post_title not in bodies:
-        bodies.insert(0, clean_text(post_title))
-    out["body"] = "\n\n".join(bodies).strip()
+    post_title = post.attr("post-title")
+    bodies = _reddit_post_text_bodies(post)
+    if bodies:
+        out["body"] = "\n\n".join(bodies).strip()
+    elif post_title:
+        out["body"] = clean_text(post_title)
+    else:
+        out["body"] = ""
     return out
 
 
@@ -439,69 +550,112 @@ def _instagram_caption_from_og(description: str) -> str:
     return clean_text(stripped.strip(" \"'«»"))
 
 
-def _fb_comment_text(block: str) -> str:
-    cleaned = re.sub(r"<button\b[^>]*>.*?</button>", " ", block or "", flags=re.I | re.S)
-    cleaned = re.sub(r'\brole=[\"\'](?:button|menu|toolbar)[\"\'][^>]*>.*?(?=<|$)', " ", cleaned, flags=re.I | re.S)
-    return clean_text(cleaned)
+def _fb_author_from_label(label: str) -> str:
+    text = clean_text(label)
+    text = re.sub(r",?\s*\d+\s*(?:ans|years?\s*old)\b.*$", "", text, flags=re.I)
+    text = re.sub(r"\s*[·•]\s*\d+.*$", "", text)
+    return text.strip()
 
 
-def _extract_facebook_comments(markup: str) -> list[dict[str, Any]]:
+def _fb_comment_text_from_elem(elem: _HtmlElement) -> str:
+    skip = frozenset({"button", "script", "style"})
+    parts: list[str] = []
+
+    def walk(node: _HtmlElement) -> None:
+        if node is not elem and node.tag in {"div", "article"}:
+            if node.attr("role") == "article" and _FB_COMMENT_LABEL.match(node.attr("aria-label")):
+                return
+        if node.tag in skip:
+            return
+        if node.attr("role") in {"button", "menu", "toolbar"}:
+            return
+        parts.extend(node.text_parts)
+        for child in node.children:
+            walk(child)
+
+    walk(elem)
+    text = clean_text("".join(parts))
+    for noise in (
+        r"\bJ['']aime\b",
+        r"\bLike\b",
+        r"\bRépondre\b",
+        r"\bReplies\b",
+        r"\bRéponses\b",
+        r"\b\d+\s*(?:réactions?|reactions?|commentaires?|comments?|partages?|shares?)\b",
+    ):
+        text = re.sub(noise, " ", text, flags=re.I)
+    return clean_text(text)
+
+
+def _extract_facebook_comments(root: _HtmlElement, *, max_comments: int = MAX_COMMENTS) -> list[dict[str, Any]]:
     comments: list[dict[str, Any]] = []
-    for match in _FB_COMMENT_ARTICLE.finditer(markup or ""):
-        author = clean_text(match.group(1)) or None
-        text = _fb_comment_text(match.group(2))
+    for elem in root.iter_descendants():
+        if elem.tag not in {"div", "article"}:
+            continue
+        if elem.attr("role") != "article":
+            continue
+        aria = elem.attr("aria-label")
+        match = _FB_COMMENT_LABEL.match(aria)
+        if not match:
+            continue
+        author = _fb_author_from_label(match.group(1)) or None
+        text = _fb_comment_text_from_elem(elem)
         if not author or not text or len(text) < 2:
             continue
         comments.append({"author": author, "text": trim_text(text, 500), "published_at": None})
-        if len(comments) >= MAX_COMMENTS:
+        if len(comments) >= max_comments:
             break
     return comments
 
 
-def _extract_reddit_comments(markup: str, source_url: str) -> list[dict[str, Any]]:
+def _extract_reddit_comments(
+    root: _HtmlElement,
+    source_url: str,
+    *,
+    max_comments: int = MAX_COMMENTS,
+) -> list[dict[str, Any]]:
     comments: list[dict[str, Any]] = []
-    for match in _REDDIT_SHREDDIT_COMMENT.finditer(markup or ""):
-        attrs = match.group(1)
-        inner = match.group(2) or ""
-        author = _tag_attr(attrs, "author")
-        bodies = _reddit_text_bodies(inner)
-        text = " ".join(bodies) if bodies else clean_text(inner)
-        if not text or len(text) < 2:
+    for comment in _find_elements(root, "shreddit-comment"):
+        author = comment.attr("author") or None
+        text = _reddit_comment_body(comment)
+        if _should_skip_reddit_comment(text):
             continue
-        lower = text.lower()
-        if any(skip in lower for skip in _REDDIT_COMMENT_SKIP):
+        if not text or len(text) < 2:
             continue
         comments.append(
             {
                 "author": author,
                 "text": trim_text(text, 500),
-                "published_at": _tag_attr(attrs, "created-timestamp"),
+                "published_at": comment.attr("created-timestamp") or None,
             }
         )
-        if len(comments) >= MAX_COMMENTS:
+        if len(comments) >= max_comments:
             break
     if comments:
         return comments
-    return _extract_generic_comments(markup)
+    return _extract_generic_comments(root, max_comments=max_comments)
 
 
-def _extract_generic_comments(markup: str) -> list[dict[str, Any]]:
+def _extract_generic_comments(root: _HtmlElement, *, max_comments: int = MAX_COMMENTS) -> list[dict[str, Any]]:
     comments: list[dict[str, Any]] = []
-    for match in _COMMENT_BLOCK.finditer(markup or ""):
-        block = match.group(1)
-        text = clean_text(block)
+    for elem in root.iter_descendants():
+        if elem.tag not in {"div", "li", "article"}:
+            continue
+        testid = elem.attr("data-testid")
+        classes = elem.attr("class")
+        if testid != "comment" and "comment" not in classes.lower():
+            continue
+        text = elem.text_content()
         if not text or len(text) < 2:
             continue
         author = None
-        author_match = re.search(
-            r"<(?:a|span)[^>]*(?:class=[\"'][^\"']*(?:author|Author|username)[^\"']*[\"'])[^>]*>(.*?)</(?:a|span)>",
-            block,
-            re.I | re.S,
-        )
-        if author_match:
-            author = clean_text(author_match.group(1)) or None
+        for child in elem.iter_descendants():
+            if child.tag in {"a", "span"} and "author" in child.attr("class").lower():
+                author = child.text_content() or None
+                if author:
+                    break
         comments.append({"author": author, "text": trim_text(text, 500), "published_at": None})
-        if len(comments) >= MAX_COMMENTS:
+        if len(comments) >= max_comments:
             break
     return comments
 
@@ -512,6 +666,7 @@ def _extract_metrics(
     platform: str = "",
     og_description: str = "",
     reddit_fields: dict[str, Any] | None = None,
+    visible: str = "",
 ) -> dict[str, int | None]:
     out: dict[str, int | None] = {"likes": None, "comments": None, "shares": None, "views": None}
     if reddit_fields and isinstance(reddit_fields.get("metrics"), dict):
@@ -525,6 +680,13 @@ def _extract_metrics(
         match = pattern.search(markup or "")
         if match:
             out[key] = _parse_count(match.group(1))
+    if platform == "facebook" and visible:
+        for key, pattern in _FB_VISIBLE_METRICS.items():
+            if out[key] is not None:
+                continue
+            match = pattern.search(visible)
+            if match:
+                out[key] = _parse_count(match.group(1))
     if platform == "instagram" and og_description:
         if out["likes"] is None:
             match = _OG_IG_LIKES.search(og_description)
@@ -561,18 +723,19 @@ def _extract_media(markup: str) -> list[dict[str, Any]]:
 
 
 def _extract_comments(
-    markup: str,
+    root: _HtmlElement,
     *,
     platform: str = "",
     source_url: str = "",
+    max_comments: int = MAX_COMMENTS,
 ) -> list[dict[str, Any]]:
     if platform == "facebook":
-        fb = _extract_facebook_comments(markup)
+        fb = _extract_facebook_comments(root, max_comments=max_comments)
         if fb:
             return fb
     if platform == "reddit":
-        return _extract_reddit_comments(markup, source_url)
-    return _extract_generic_comments(markup)
+        return _extract_reddit_comments(root, source_url, max_comments=max_comments)
+    return _extract_generic_comments(root, max_comments=max_comments)
 
 
 def _extract_author(
@@ -656,6 +819,7 @@ def _extract_published_at(
 
 
 def _platform_body(
+    root: _HtmlElement,
     markup: str,
     *,
     platform: str,
@@ -676,18 +840,17 @@ def _platform_body(
                 if text and text not in chunks:
                     chunks.append(text)
             if source_url:
-                selected = _select_shreddit_post(markup, source_url)
-                if selected:
-                    bodies = _reddit_text_bodies(selected[1])
-                    for text in bodies:
+                post = _select_shreddit_post(root, source_url)
+                if post:
+                    for text in _reddit_post_text_bodies(post):
                         if text not in chunks:
                             chunks.append(text)
     elif platform == "instagram":
         caption = _instagram_caption_from_og(og_description)
         if caption:
             chunks.append(caption)
-        for match in _IG_ARTICLE.finditer(markup or ""):
-            text = clean_text(match.group(1))
+        for elem in _find_elements(root, "article"):
+            text = elem.text_content()
             if text and text not in chunks:
                 chunks.append(text)
                 break
@@ -695,10 +858,14 @@ def _platform_body(
         og = og_description or _meta_content(markup, prop="og:description")
         if og and len(og) >= 20:
             chunks.append(og)
-        for match in _FB_POST_TEXT.finditer(markup or ""):
-            text = clean_text(match.group(1))
-            if text and text not in chunks:
-                chunks.append(text)
+        for elem in root.iter_descendants():
+            preview = elem.attr("data-ad-preview")
+            testid = elem.attr("data-testid")
+            classes = elem.attr("class")
+            if preview == "message" or testid == "post_message" or "usercontent" in classes.lower():
+                text = elem.text_content()
+                if text and text not in chunks:
+                    chunks.append(text)
     return "\n\n".join(chunks).strip()
 
 
@@ -766,22 +933,31 @@ def parse_cloak_html(
         or _meta_content(markup, name="description")
         or _meta_content(markup, name="twitter:description")
     )
+    root = _parse_html_tree(markup)
+    visible = _visible_text(markup)
     reddit_fields = (
-        _extract_reddit_post_fields(markup, final_url or source_url)
+        _extract_reddit_post_fields(root, final_url or source_url)
         if platform == "reddit"
         else {}
     )
     if platform == "reddit" and reddit_fields:
-        selected = _select_shreddit_post(markup, final_url or source_url)
-        if selected:
-            post_title = _tag_attr(selected[0], "post-title")
+        post = _select_shreddit_post(root, final_url or source_url)
+        if post:
+            post_title = post.attr("post-title")
             if post_title:
                 title = clean_text(post_title) or title
             if not title:
-                match = _REDDIT_SHREDDIT_TITLE.search(selected[1] or markup or "")
-                if match:
-                    title = clean_text(match.group(1)) or title
+                for elem in _find_elements(post, "shreddit-title"):
+                    t = elem.attr("title")
+                    if t:
+                        title = clean_text(t) or title
+                        break
+                if not title:
+                    match = _REDDIT_SHREDDIT_TITLE.search(markup or "")
+                    if match:
+                        title = clean_text(match.group(1)) or title
     body = _platform_body(
+        root,
         markup,
         platform=platform,
         source_url=final_url or source_url,
@@ -806,13 +982,15 @@ def parse_cloak_html(
         platform=platform,
         og_description=description,
         reddit_fields=reddit_fields,
+        visible=visible,
     )
     media = _extract_media(markup)
     comments = _extract_comments(
-        markup,
+        root,
         platform=platform,
         source_url=final_url or source_url,
-    )[: max(0, int(max_comments))]
+        max_comments=max(0, int(max_comments)),
+    )
     useful = len(text) >= MIN_USEFUL_CHARS or bool(title and media)
     content_kind = infer_content_kind(final_url or source_url, platform)
 

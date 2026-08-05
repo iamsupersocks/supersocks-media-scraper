@@ -238,3 +238,6 @@ data/
 !tests/fixtures/**
 download-history/
 history.json
+
+# Hermes harness worktrees
+.worktrees/
