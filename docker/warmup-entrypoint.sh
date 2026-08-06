@@ -5,6 +5,11 @@
 # inspects browser cookies.
 set -euo pipefail
 
+# Source the scoped Chromium stale-lock cleanup helper (sibling of this script).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=chromium-lock-cleanup.sh
+source "${SCRIPT_DIR}/chromium-lock-cleanup.sh"
+
 ALLOWED_PLATFORMS="reddit instagram facebook"
 PLATFORM="$(printf '%s' "${WARMUP_PLATFORM:-reddit}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
 WARMUP_SECONDS="${WARMUP_SECONDS:-600}"
@@ -18,6 +23,12 @@ READY_TIMEOUT_SECONDS="${READY_TIMEOUT_SECONDS:-45}"
 
 CHILD_PIDS=()
 SCRAPER_PID=""
+# Bounded seconds to wait for Chromium to fully exit before removing its
+# Singleton* lock entries (Chromium must be gone before we clear the locks).
+LOCK_SHUTDOWN_WAIT_SECONDS="${LOCK_SHUTDOWN_WAIT_SECONDS:-10}"
+if ! [[ "${LOCK_SHUTDOWN_WAIT_SECONDS}" =~ ^[0-9]+$ ]]; then
+  LOCK_SHUTDOWN_WAIT_SECONDS=10
+fi
 
 log() {
   printf '[warmup] %s\n' "$*" >&2
@@ -40,31 +51,60 @@ is_allowed_platform() {
 }
 
 cleanup_children() {
-  local pid
+  local pid waited
+  # Terminate the scraper/browser tree first (its own process group from
+  # setsid), so Chromium releases the profile Singleton* locks.
   if [[ -n "${SCRAPER_PID}" ]]; then
-    kill -TERM "${SCRAPER_PID}" 2>/dev/null || true
+    kill -TERM -- "-${SCRAPER_PID}" 2>/dev/null \
+      || kill -TERM "${SCRAPER_PID}" 2>/dev/null || true
   fi
+  # Also terminate sibling display/VNC helper processes.
   for pid in "${CHILD_PIDS[@]:-}"; do
     if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
       kill -TERM "${pid}" 2>/dev/null || true
     fi
   done
-  sleep 0.5
+  # Wait boundedly for the scraper/browser tree to exit before clearing locks.
+  waited=0
+  while (( waited < LOCK_SHUTDOWN_WAIT_SECONDS )); do
+    if [[ -z "${SCRAPER_PID}" ]] || ! kill -0 "${SCRAPER_PID}" 2>/dev/null; then
+      break
+    fi
+    sleep 0.25
+    waited=$((waited + 1))
+  done
+  # Escalate to KILL for anything that is still alive.
+  if [[ -n "${SCRAPER_PID}" ]] && kill -0 "${SCRAPER_PID}" 2>/dev/null; then
+    kill -KILL -- "-${SCRAPER_PID}" 2>/dev/null \
+      || kill -KILL "${SCRAPER_PID}" 2>/dev/null || true
+  fi
   for pid in "${CHILD_PIDS[@]:-}"; do
     if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
       kill -KILL "${pid}" 2>/dev/null || true
     fi
   done
   wait 2>/dev/null || true
+  # Chromium is gone: remove only the known stale lock entries from the scoped
+  # profile. Never touches cookies, databases, or any other file.
+  remove_stale_chromium_locks
 }
 
-on_signal() {
-  log "received signal; shutting down child processes"
+_shutdown() {
+  local sig="$1" code=143
+  case "${sig}" in
+    INT) code=130 ;;
+    TERM) code=143 ;;
+  esac
+  log "received SIG${sig}; terminating scraper/browser, then removing stale Chromium locks"
   cleanup_children
-  exit 143
+  # Preserve signal semantics: clear our traps, then re-raise the received
+  # signal so the shell exits with the canonical 128+signal status.
+  trap - EXIT INT TERM
+  kill -"${sig}" "$$" 2>/dev/null || exit "${code}"
 }
 
-trap on_signal INT TERM
+trap '_shutdown TERM' TERM
+trap '_shutdown INT' INT
 trap cleanup_children EXIT
 
 if ! is_allowed_platform "${PLATFORM}"; then
@@ -160,9 +200,19 @@ done
 
 log "noVNC ready: http://127.0.0.1:${NOVNC_PORT}/vnc.html?autoconnect=1&resize=scale"
 log "complete login/consent/challenge manually in the browser, then stop this service"
+
+# Clear any stale Chromium Singleton* locks left in the scoped platform profile
+# by a previous warmup container stop, so a fresh headed launch can acquire the
+# profile. Scoped to the allowlisted platform dir; never touches cookies or DBs.
+log "removing stale Chromium Singleton* locks from scoped profile '${PLATFORM}'"
+remove_stale_chromium_locks
+
+command -v setsid >/dev/null || die "setsid not installed in warmup image"
 log "starting headed warm-up: supersocks-media-scraper --warmup ${PLATFORM} --create-profile"
 
-supersocks-media-scraper \
+# Run the scraper in its own session/process group so a shutdown can terminate
+# the whole Chromium browser tree cleanly (not just the Python parent).
+setsid supersocks-media-scraper \
   --warmup "${PLATFORM}" \
   --create-profile \
   --warmup-seconds "${WARMUP_SECONDS}" &

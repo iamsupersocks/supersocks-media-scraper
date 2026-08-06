@@ -95,8 +95,11 @@ RUN apt-get update \
     && rm -rf /tmp/novnc.tgz "/tmp/noVNC-${NOVNC_VERSION}" /var/lib/apt/lists/*
 
 COPY docker/warmup-entrypoint.sh /usr/local/bin/warmup-entrypoint.sh
+COPY docker/chromium-lock-cleanup.sh /usr/local/bin/chromium-lock-cleanup.sh
 RUN chmod 0755 /usr/local/bin/warmup-entrypoint.sh \
     && chown scraper:scraper /usr/local/bin/warmup-entrypoint.sh \
+    && chmod 0755 /usr/local/bin/chromium-lock-cleanup.sh \
+    && chown scraper:scraper /usr/local/bin/chromium-lock-cleanup.sh \
     && mkdir -p /tmp/.X11-unix \
     && chmod 1777 /tmp/.X11-unix \
     && chown root:root /tmp/.X11-unix
