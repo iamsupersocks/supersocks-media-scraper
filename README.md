@@ -128,6 +128,20 @@ Useful CLI flags (validated against the code): `--max-chars`, `--max-comments`,
 `--timeout`, `--browser-profile-dir`, `--headed`, `--warmup`, `--create-profile`,
 `--warmup-seconds`, `--warmup-url`, `--version`.
 
+## Live smoke testing
+
+For a reproducible four-platform smoke run (x, reddit, instagram, facebook),
+default verify vs `--require-success`, public URL overrides, anonymous vs
+warmed/authenticated interpretation, and the dated verification matrix, see
+[docs/LIVE_TESTING.md](docs/LIVE_TESTING.md).
+
+```bash
+pip install -e '.[all,test]'
+supersocks-media-scraper-smoke
+supersocks-media-scraper-smoke --require-success
+pytest -q
+```
+
 ## Python API
 
 ```python

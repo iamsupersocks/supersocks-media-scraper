@@ -37,6 +37,7 @@ dev = ["pytest>=8.0", "pyyaml>=6.0", "build>=1.2"]
 
 [project.scripts]
 supersocks-media-scraper = "supersocks_media_scraper.cli:main"
+supersocks-media-scraper-smoke = "supersocks_media_scraper.live_smoke:main"
 
 [project.urls]
 Homepage = "https://github.com/iamsupersocks/supersocks-media-scraper"
@@ -46,6 +47,7 @@ Repository = "https://github.com/iamsupersocks/supersocks-media-scraper"
 include = [
   "/src",
   "/tests",
+  "/docs",
   "/README.md",
   "/LICENSE",
   "/pyproject.toml",
