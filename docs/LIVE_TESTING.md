@@ -4,13 +4,13 @@ Dated guide for running the four-platform live smoke harness against
 `supersocks-media-scraper`. This is a reproducible verification helper, not a
 claim of universal scraping.
 
-**Baseline commit (clean main start):** `95d59fa01f4226d10d99776ca2efbf58698cf0f1`  
-**Harness commit:** `fd2fcb140688753d7b4136edc32b6d1a074c817f`  
+**Baseline commit (clean main start):** `95d59fa01f4226d10d99776ca2efbf58698cf0f1`
+**Harness commit:** `fd2fcb140688753d7b4136edc32b6d1a074c817f`
+**Evidence commit:** `c8375a83e807e228b1f0e2822eeaa1874ecceae0`
 **Doc date:** 2026-08-06
 
-Live network rows below record only observed evidence. Rows marked
-`not observed` were not executed in the implementing worktree; Codex (or another
-operator) should replace them after independent QA.
+Live network rows below record only observed evidence. Warmed or authenticated
+reruns are listed separately when not performed.
 
 ## What the harness does
 
@@ -188,36 +188,72 @@ Keep fixture results separate from the live matrix below.
 
 ## Verification matrix (2026-08-06)
 
-**Environment (implementing worktree):**
+**Environment (Codex independent QA, Docker):**
 
 | Field | Value |
 | --- | --- |
 | Date | 2026-08-06 |
 | Repo | supersocks-media-scraper |
-| Start baseline | `95d59fa01f4226d10d99776ca2efbf58698cf0f1` |
-| Harness commit | `fd2fcb140688753d7b4136edc32b6d1a074c817f` |
-| Worker branch | `codex/1835303464985429970/grok-primary` |
-| Harness | `supersocks_media_scraper.live_smoke` |
-| Offline tests | `pytest -q` → 83 passed (2026-08-06, this worktree) |
-| Live network in this worker | **not run** (no fabricated live rows) |
+| Commit | `c8375a83e807e228b1f0e2822eeaa1874ecceae0` |
+| Host | Linux x86_64 |
+| Image | `supersocks-media-scraper:runtime` (`docker build -t supersocks-media-scraper:runtime .`) |
+| Profiles volume | `sms-live-smoke-c8375a8` (fresh isolated Docker volume) |
+| X credentials | explicit blank (`TWITTER_AUTH_TOKEN` / `TWITTER_CT0` unset) |
+| Harness | `supersocks-media-scraper-smoke` |
+| Offline tests | `pytest -q` → 83 passed (2026-08-06, evidence commit worktree) |
 
-**Anonymous / cold baseline (live):**
+Smoke URLs (explicit overrides for this run):
 
-| Platform | URL used | Classification | Notes |
+| Platform | URL used |
+| --- | --- |
+| x | `https://x.com/iamsupersocks/status/2082846361494417549` |
+| reddit | `https://www.reddit.com/r/ModSupport/comments/1rshtk3/how_do_i_post_an_announcement_i_dont_see_anywhere/` |
+| instagram | `https://www.instagram.com/instagram/p/DbbY9pdm6Q2/` |
+| facebook | `https://www.facebook.com/facebook` |
+
+**Default verify mode** (`--require-success` off, cold profiles, blank X tokens):
+
+| Platform | Classification | Schema | Notes |
 | --- | --- | --- | --- |
-| x | default | not observed | Pending independent QA |
-| reddit | default | not observed | Pending independent QA |
-| instagram | default | not observed | Pending independent QA |
-| facebook | default | not observed | Pending independent QA |
+| x | `needs-human` / `login` | valid | no useful content extracted |
+| reddit | `needs-human` / `challenge` | valid | no useful content extracted |
+| instagram | `needs-human` / `consent` | valid | no useful content extracted |
+| facebook | `needs-human` / `consent` | valid | no useful content extracted |
 
-**Warmed / authenticated rerun (live):**
+Run summary: exit `0`; `content-success` count **0** (all four returned honest
+human gates, not scraped content).
 
-| Platform | Auth/profile state | Classification | Notes |
+Example Docker invocation (verify):
+
+```bash
+docker build -t supersocks-media-scraper:runtime .
+docker volume create sms-live-smoke-c8375a8
+docker run --rm \
+  -v sms-live-smoke-c8375a8:/home/scraper/media-browser-profiles \
+  -e TWITTER_AUTH_TOKEN= -e TWITTER_CT0= \
+  --entrypoint supersocks-media-scraper-smoke \
+  supersocks-media-scraper:runtime \
+  --url-x 'https://x.com/iamsupersocks/status/2082846361494417549' \
+  --url-instagram 'https://www.instagram.com/instagram/p/DbbY9pdm6Q2/'
+echo $?   # 0 on 2026-08-06 Codex QA run
+```
+
+**Strict mode rerun** (`--require-success`, same URLs/volume/credentials):
+
+| Platform | Classification | Schema | Notes |
 | --- | --- | --- | --- |
-| x | `TWITTER_AUTH_TOKEN` + `TWITTER_CT0` | not observed | Pending independent QA |
-| reddit | headed warm-up profile | not observed | Pending independent QA |
-| instagram | headed warm-up profile | not observed | Pending independent QA |
-| facebook | headed warm-up profile | not observed | Pending independent QA |
+| x | `needs-human` | valid | still gated |
+| reddit | `runtime-error` | valid | empty Cloak render without a human gate |
+| instagram | `needs-human` | valid | still gated |
+| facebook | `needs-human` | valid | still gated |
+
+Run summary: exit `1`. Reddit flipped from `needs-human/challenge` to
+`runtime-error` on rerun — live backends vary; do not treat a single cold run
+as universal.
+
+**Warmed / authenticated rerun (live):** **not performed.** No headed warm-up,
+no `TWITTER_AUTH_TOKEN`/`TWITTER_CT0`, and no `--require-success` pass with
+`content-success` on any platform in this QA cycle.
 
 **Deterministic fixture status (offline):** covered by existing pytest suites listed
 above; run `pytest -q` after install. Treat offline green separately from live
