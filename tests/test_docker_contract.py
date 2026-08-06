@@ -234,8 +234,14 @@ def _run_lock_cleanup(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
 def _populate_profile(profile: Path) -> None:
     """Create the three stale Chromium Singleton* entries plus unrelated files."""
     profile.mkdir(parents=True, exist_ok=True)
+    # Real-world Chromium locks are symlinks. Point them at a real target inside
+    # the temp profile so the links are verifiably present on any filesystem
+    # (Linux or macOS) — /proc/self/fd/0 is Linux-only and leaves a dangling
+    # link that reports exists() == False.
+    target = profile / "lock-target"
+    target.write_text("lock-target-data", encoding="utf-8")
     for entry in CHROMIUM_LOCK_ENTRIES:
-        profile.joinpath(entry).symlink_to("/proc/self/fd/0")
+        profile.joinpath(entry).symlink_to(target.name)
     # Real-world profile contents that MUST never be touched.
     (profile / "Cookies").write_text("cookie-data", encoding="utf-8")
     (profile / "Cookies-journal").write_text("cookie-journal", encoding="utf-8")
@@ -257,6 +263,9 @@ def test_lock_cleanup_removes_exactly_the_three_lock_entries(tmp_path: Path) -> 
 
     for entry in CHROMIUM_LOCK_ENTRIES:
         assert not profile.joinpath(entry).exists(), f"{entry} should be removed"
+    # The real target the locks pointed at is unrelated to the three known lock
+    # entries and must remain present.
+    assert (profile / "lock-target").read_text(encoding="utf-8") == "lock-target-data"
     # Unrelated profile contents stay untouched.
     assert (profile / "Cookies").read_text(encoding="utf-8") == "cookie-data"
     assert (profile / "Cookies-journal").read_text(encoding="utf-8") == "cookie-journal"
@@ -358,8 +367,10 @@ def test_lock_cleanup_platform_is_case_insensitive(tmp_path: Path) -> None:
 
     proc = _run_lock_cleanup({"MEDIA_BROWSER_PROFILES_ROOT": str(root), "WARMUP_PLATFORM": "REDDIT"})
     assert proc.returncode == 0
-    # Uppercase platform normalizes to the allowlisted lowercase profile dir.
-    assert not (root / "REDDIT").exists()
+    # Uppercase platform normalizes to the allowlisted lowercase profile dir and
+    # cleans only that selected profile. (We cannot assert `root / "REDDIT"` is
+    # absent here — default macOS filesystems are case-insensitive, so REDDIT
+    # and reddit are the same directory.)
     for entry in CHROMIUM_LOCK_ENTRIES:
         assert not reddit.joinpath(entry).exists(), "case-insensitive REDDIT should clean reddit"
 
