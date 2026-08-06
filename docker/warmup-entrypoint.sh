@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ALLOWED_PLATFORMS="reddit instagram facebook"
-PLATFORM="$(printf '%s' "${WARMUP_PLATFORM:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+PLATFORM="$(printf '%s' "${WARMUP_PLATFORM:-reddit}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
 WARMUP_SECONDS="${WARMUP_SECONDS:-600}"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 export DISPLAY=":${DISPLAY_NUM}"
@@ -67,13 +67,13 @@ on_signal() {
 trap on_signal INT TERM
 trap cleanup_children EXIT
 
-if [[ -z "${PLATFORM}" ]]; then
-  die "WARMUP_PLATFORM is required (allowed: ${ALLOWED_PLATFORMS})"
-fi
 if ! is_allowed_platform "${PLATFORM}"; then
   die "invalid WARMUP_PLATFORM='${PLATFORM}' (allowed: ${ALLOWED_PLATFORMS})"
 fi
 if ! [[ "${WARMUP_SECONDS}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  die "WARMUP_SECONDS must be a positive number (got '${WARMUP_SECONDS}')"
+fi
+if ! awk -v v="${WARMUP_SECONDS}" 'BEGIN { exit (v + 0 > 0) ? 0 : 1 }'; then
   die "WARMUP_SECONDS must be a positive number (got '${WARMUP_SECONDS}')"
 fi
 

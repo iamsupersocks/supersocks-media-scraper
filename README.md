@@ -252,7 +252,10 @@ browser, then reuse the same named volume headless:
 git clone https://github.com/iamsupersocks/supersocks-media-scraper.git
 cd supersocks-media-scraper
 
-# Build + start noVNC warm-up (allowlisted: reddit|instagram|facebook)
+# Build + start noVNC warm-up (defaults to reddit; override with WARMUP_PLATFORM)
+docker compose up --build warmup
+
+# Or pick another allowlisted platform: reddit|instagram|facebook
 WARMUP_PLATFORM=instagram docker compose up --build warmup
 ```
 
@@ -279,7 +282,14 @@ ssh -L 6080:127.0.0.1:6080 user@docker-host
 Optional longer wait (default `WARMUP_SECONDS=600`):
 
 ```bash
-WARMUP_PLATFORM=reddit WARMUP_SECONDS=900 docker compose up --build warmup
+WARMUP_SECONDS=900 docker compose up --build warmup
+WARMUP_PLATFORM=instagram WARMUP_SECONDS=900 docker compose up --build warmup
+```
+
+Optional isolated QA volume (does not touch the default `sms-media-profiles` volume):
+
+```bash
+MEDIA_PROFILES_VOLUME=sms-media-profiles-qa docker compose up --build warmup
 ```
 
 ### Resume headless scrape (same volume)

@@ -17,6 +17,7 @@ COMPOSE = ROOT / "compose.yaml"
 ENTRYPOINT = ROOT / "docker" / "warmup-entrypoint.sh"
 PROFILE_ROOT = "/home/scraper/media-browser-profiles"
 ALLOWED_PLATFORMS = ("reddit", "instagram", "facebook")
+DEFAULT_VOLUME_NAME = "sms-media-profiles"
 
 
 def test_dockerfile_has_runtime_and_warmup_targets() -> None:
@@ -60,7 +61,7 @@ def test_compose_parse_shared_volume_and_loopback_novnc() -> None:
 
     volumes = data["volumes"]
     assert "media-browser-profiles" in volumes
-    assert volumes["media-browser-profiles"]["name"] == "sms-media-profiles"
+    assert volumes["media-browser-profiles"]["name"] == "${MEDIA_PROFILES_VOLUME:-sms-media-profiles}"
 
     ports = warmup["ports"]
     assert ports == ["127.0.0.1:6080:6080"]
@@ -68,8 +69,7 @@ def test_compose_parse_shared_volume_and_loopback_novnc() -> None:
     assert not any(isinstance(p, str) and p.startswith("0.0.0.0:") for p in ports)
 
     env = warmup["environment"]
-    assert "WARMUP_PLATFORM" in env
-    assert "WARMUP_SECONDS" in env
+    assert env["WARMUP_PLATFORM"] == "${WARMUP_PLATFORM:-reddit}"
     assert "600" in str(env["WARMUP_SECONDS"])
 
     # X credentials are host env pass-through only on the scraper service.
@@ -78,23 +78,24 @@ def test_compose_parse_shared_volume_and_loopback_novnc() -> None:
     assert "TWITTER_CT0" in scraper_env
 
 
-def test_compose_config_validates_when_docker_compose_available() -> None:
+def _run_compose_config(extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in ("WARMUP_PLATFORM", "MEDIA_PROFILES_VOLUME")}
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        ["docker", "compose", "-f", str(COMPOSE), "config"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+
+def test_compose_config_validates_without_warmup_platform() -> None:
     try:
-        proc = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "-f",
-                str(COMPOSE),
-                "config",
-            ],
-            cwd=ROOT,
-            env={**os.environ, "WARMUP_PLATFORM": "instagram"},
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
+        proc = _run_compose_config()
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         pytest.skip(f"docker compose unavailable: {exc}")
 
@@ -102,15 +103,35 @@ def test_compose_config_validates_when_docker_compose_available() -> None:
         combined = (proc.stdout or "") + (proc.stderr or "")
         if "permission denied" in combined.lower() or "cannot connect" in combined.lower():
             pytest.skip(f"docker daemon unavailable: {combined.strip()[:200]}")
-        pytest.fail(f"docker compose config failed:\n{combined}")
+        pytest.fail(f"docker compose config failed without WARMUP_PLATFORM:\n{combined}")
 
     rendered = yaml.safe_load(proc.stdout)
-    assert rendered["services"]["warmup"]["ports"]
-    # Published port must stay loopback-bound after compose interpolation.
+    warmup_env = rendered["services"]["warmup"]["environment"]
+    assert warmup_env["WARMUP_PLATFORM"] == "reddit"
+
     port_entries = rendered["services"]["warmup"]["ports"]
     serialized = yaml.safe_dump(port_entries)
     assert "127.0.0.1" in serialized
     assert "6080" in serialized
+
+    assert rendered["volumes"]["media-browser-profiles"]["name"] == DEFAULT_VOLUME_NAME
+    assert rendered["services"]["scraper"]["volumes"] == rendered["services"]["warmup"]["volumes"]
+
+
+def test_compose_config_volume_override() -> None:
+    try:
+        proc = _run_compose_config({"MEDIA_PROFILES_VOLUME": "sms-media-profiles-qa"})
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        pytest.skip(f"docker compose unavailable: {exc}")
+
+    if proc.returncode != 0:
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        if "permission denied" in combined.lower() or "cannot connect" in combined.lower():
+            pytest.skip(f"docker daemon unavailable: {combined.strip()[:200]}")
+        pytest.fail(f"docker compose config failed with volume override:\n{combined}")
+
+    rendered = yaml.safe_load(proc.stdout)
+    assert rendered["volumes"]["media-browser-profiles"]["name"] == "sms-media-profiles-qa"
 
 
 def test_warmup_entrypoint_allowlist_and_invalid_platform_exit() -> None:
@@ -146,7 +167,7 @@ def test_warmup_entrypoint_allowlist_and_invalid_platform_exit() -> None:
     assert "tiktok" in combined
 
 
-def test_warmup_entrypoint_requires_platform() -> None:
+def test_warmup_entrypoint_defaults_to_reddit_when_unset() -> None:
     proc = subprocess.run(
         ["bash", str(ENTRYPOINT)],
         cwd=ROOT,
@@ -161,4 +182,26 @@ def test_warmup_entrypoint_requires_platform() -> None:
     )
     assert proc.returncode != 0
     combined = (proc.stdout or "") + (proc.stderr or "")
-    assert "WARMUP_PLATFORM is required" in combined
+    assert "platform=reddit" in combined
+    assert "invalid WARMUP_PLATFORM" not in combined
+
+
+@pytest.mark.parametrize("seconds", ["0", "0.0"])
+def test_warmup_entrypoint_rejects_non_positive_warmup_seconds(seconds: str) -> None:
+    proc = subprocess.run(
+        ["bash", str(ENTRYPOINT)],
+        cwd=ROOT,
+        env={
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "WARMUP_PLATFORM": "reddit",
+            "WARMUP_SECONDS": seconds,
+            "HOME": str(ROOT / ".pytest_warmup_home"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert proc.returncode != 0
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    assert "WARMUP_SECONDS must be a positive number" in combined

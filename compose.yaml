@@ -1,7 +1,8 @@
 # Compose: lean runtime scraper + guided noVNC warm-up.
 # Both services share one named media profile volume.
 #
-# First-use warm-up (operator login/consent/challenge once):
+# First-use warm-up (operator login/consent/challenge once; defaults to reddit):
+#   docker compose up --build warmup
 #   WARMUP_PLATFORM=instagram docker compose up --build warmup
 #   open http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale
 #
@@ -39,7 +40,7 @@ services:
     environment:
       CLOAKBROWSER_SUPPRESS_FONT_WARNING: "1"
       MEDIA_BROWSER_PROFILES_ROOT: /home/scraper/media-browser-profiles
-      WARMUP_PLATFORM: ${WARMUP_PLATFORM:?Set WARMUP_PLATFORM to reddit, instagram, or facebook}
+      WARMUP_PLATFORM: ${WARMUP_PLATFORM:-reddit}
       WARMUP_SECONDS: ${WARMUP_SECONDS:-600}
       DISPLAY: ":99"
     volumes:
@@ -52,4 +53,4 @@ services:
 
 volumes:
   media-browser-profiles:
-    name: sms-media-profiles
+    name: ${MEDIA_PROFILES_VOLUME:-sms-media-profiles}
