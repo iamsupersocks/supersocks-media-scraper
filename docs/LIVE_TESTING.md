@@ -5,6 +5,7 @@ Dated guide for running the four-platform live smoke harness against
 claim of universal scraping.
 
 **Baseline commit (clean main start):** `95d59fa01f4226d10d99776ca2efbf58698cf0f1`  
+**Harness commit:** `fd2fcb140688753d7b4136edc32b6d1a074c817f`  
 **Doc date:** 2026-08-06
 
 Live network rows below record only observed evidence. Rows marked
@@ -194,9 +195,10 @@ Keep fixture results separate from the live matrix below.
 | Date | 2026-08-06 |
 | Repo | supersocks-media-scraper |
 | Start baseline | `95d59fa01f4226d10d99776ca2efbf58698cf0f1` |
+| Harness commit | `fd2fcb140688753d7b4136edc32b6d1a074c817f` |
 | Worker branch | `codex/1835303464985429970/grok-primary` |
 | Harness | `supersocks_media_scraper.live_smoke` |
-| Offline tests | pytest (see commands/results in the implementing commit message / QA report) |
+| Offline tests | `pytest -q` → 83 passed (2026-08-06, this worktree) |
 | Live network in this worker | **not run** (no fabricated live rows) |
 
 **Anonymous / cold baseline (live):**
