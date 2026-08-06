@@ -196,7 +196,7 @@ Keep fixture results separate from the live matrix below.
 | Repo | supersocks-media-scraper |
 | Commit | `c8375a83e807e228b1f0e2822eeaa1874ecceae0` |
 | Host | Linux x86_64 |
-| Image | `supersocks-media-scraper:runtime` (`docker build -t supersocks-media-scraper:runtime .`) |
+| Image | `supersocks-media-scraper:smoke-c8375a8` (`docker build -t supersocks-media-scraper:smoke-c8375a8 .`) |
 | Profiles volume | `sms-live-smoke-c8375a8` (fresh isolated Docker volume) |
 | X credentials | explicit blank (`TWITTER_AUTH_TOKEN` / `TWITTER_CT0` unset) |
 | Harness | `supersocks-media-scraper-smoke` |
@@ -226,13 +226,13 @@ human gates, not scraped content).
 Example Docker invocation (verify):
 
 ```bash
-docker build -t supersocks-media-scraper:runtime .
+docker build -t supersocks-media-scraper:smoke-c8375a8 .
 docker volume create sms-live-smoke-c8375a8
 docker run --rm \
   -v sms-live-smoke-c8375a8:/home/scraper/media-browser-profiles \
   -e TWITTER_AUTH_TOKEN= -e TWITTER_CT0= \
   --entrypoint supersocks-media-scraper-smoke \
-  supersocks-media-scraper:runtime \
+  supersocks-media-scraper:smoke-c8375a8 \
   --url-x 'https://x.com/iamsupersocks/status/2082846361494417549' \
   --url-instagram 'https://www.instagram.com/instagram/p/DbbY9pdm6Q2/'
 echo $?   # 0 on 2026-08-06 Codex QA run
